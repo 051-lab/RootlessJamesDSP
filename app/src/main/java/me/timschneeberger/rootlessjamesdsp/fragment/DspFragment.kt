@@ -10,9 +10,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.databinding.FragmentDspBinding
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
@@ -25,18 +22,20 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
     private val prefsApp: Preferences.App by inject()
     private val prefsVar: Preferences.Var by inject()
 
-    private lateinit var binding: FragmentDspBinding
+    private var _binding: FragmentDspBinding? = null
+    private val binding get() = _binding!!
     private var updateNoticeOnClick: (() -> Unit)? = null
     private var updateNoticeOnCloseClick: (() -> Unit)? = null
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onStart() {
+        super.onStart()
         prefsApp.registerOnSharedPreferenceChangeListener(this)
-        super.onCreate(savedInstanceState)
+        onSharedPreferenceChanged(null, getString(R.string.key_device_profiles_enable))
     }
 
-    override fun onDestroy() {
+    override fun onStop() {
         prefsApp.unregisterOnSharedPreferenceChangeListener(this)
-        super.onDestroy()
+        super.onStop()
     }
 
     override fun onCreateView(
@@ -44,7 +43,7 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentDspBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentDspBinding.inflate(layoutInflater, container, false)
 
         binding.translationNotice.setOnCloseClickListener(::hideTranslationNotice)
         binding.translationNotice.setOnRootClickListener {
@@ -105,6 +104,10 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
                     R.xml.dsp_convolver_preferences
                 ))
             .replace(
+                R.id.card_darwin, PreferenceGroupFragment.newInstance(Constants.PREF_DARWIN,
+                    R.xml.dsp_darwin_preferences
+                ))
+            .replace(
                 R.id.card_liveprog, PreferenceGroupFragment.newInstance(Constants.PREF_LIVEPROG,
                     R.xml.dsp_liveprog_preferences
                 ))
@@ -126,18 +129,18 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
                 ))
             .commit()
 
-        // Load initial preferences
-        arrayOf(R.string.key_device_profiles_enable).forEach {
-            onSharedPreferenceChanged(null, getString(it))
-        }
-
         return binding.root
+    }
+
+    override fun onDestroyView() {
+        _binding = null
+        super.onDestroyView()
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         when(key) {
             getString(R.string.key_device_profiles_enable) -> {
-                (binding.cardDeviceProfiles.parent as ViewGroup).isVisible =
+                (_binding?.cardDeviceProfiles?.parent as? ViewGroup)?.isVisible =
                     prefsApp.get<Boolean>(R.string.key_device_profiles_enable)
             }
         }
@@ -150,11 +153,11 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
     }
 
     fun setUpdateCardVisible(visible: Boolean) {
-        binding.updateNotice.isVisible = visible
+        _binding?.updateNotice?.isVisible = visible
     }
 
     fun setUpdateCardTitle(title: String) {
-        binding.updateNotice.titleText = title
+        _binding?.updateNotice?.titleText = title
     }
 
     fun setUpdateCardOnClick(onClick: () -> Unit) {
@@ -166,16 +169,14 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
     }
 
     fun restartFragment(id: Int, newFragment: Fragment) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                childFragmentManager.beginTransaction()
-                    .replace(id, newFragment)
-                    .commitAllowingStateLoss()
-            }
-            catch(ex: IllegalStateException) {
-                Timber.e("Failed to restart fragment")
-                Timber.i(ex)
-            }
+        try {
+            childFragmentManager.beginTransaction()
+                .replace(id, newFragment)
+                .commitAllowingStateLoss()
+        }
+        catch(ex: IllegalStateException) {
+            Timber.e("Failed to restart fragment")
+            Timber.i(ex)
         }
     }
 

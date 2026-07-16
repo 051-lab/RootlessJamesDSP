@@ -1,5 +1,6 @@
 package me.timschneeberger.rootlessjamesdsp.backup
 
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -67,6 +68,7 @@ class BackupRestoreService : Service() {
     private var backupManager: BackupManager? = null
     private lateinit var notifier: BackupNotifier
 
+    @SuppressLint("ForegroundServiceType")
     override fun onCreate() {
         super.onCreate()
 

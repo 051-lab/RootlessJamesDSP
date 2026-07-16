@@ -9,14 +9,12 @@ import me.timschneeberger.rootlessjamesdsp.databinding.FragmentLibraryLoadErrorB
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.openPlayStoreApp
 
 class LibraryLoadErrorFragment : Fragment() {
-    private lateinit var binding: FragmentLibraryLoadErrorBinding
-
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentLibraryLoadErrorBinding.inflate(layoutInflater, container, false)
+        val binding = FragmentLibraryLoadErrorBinding.inflate(layoutInflater, container, false)
         binding.rootlessNotice.setOnClickListener {
             requireContext().openPlayStoreApp("me.timschneeberger.rootlessjamesdsp")
         }

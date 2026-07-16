@@ -8,10 +8,11 @@ import android.view.ViewGroup
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.timschneeberger.rootlessjamesdsp.MainApplication
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.adapter.AppBlocklistAdapter
@@ -34,7 +35,8 @@ import org.koin.android.ext.android.inject
 
 class BlocklistFragment : Fragment() {
 
-    private lateinit var binding: FragmentBlocklistBinding
+    private var _binding: FragmentBlocklistBinding? = null
+    private val binding get() = _binding!!
     private lateinit var appsListFragment: AppsListFragment
     private lateinit var adapter: AppBlocklistAdapter
 
@@ -49,7 +51,6 @@ class BlocklistFragment : Fragment() {
     private val iconCache: HashMap<Int, Drawable> = hashMapOf()
 
     private lateinit var sessionRecordingPolicyManager: SessionRecordingPolicyManager
-    private val policyPollingScope = CoroutineScope(Dispatchers.Main)
     private var restrictedApps = arrayOf<String>()
 
     override fun onCreateView(
@@ -57,7 +58,7 @@ class BlocklistFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentBlocklistBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentBlocklistBinding.inflate(layoutInflater, container, false)
 
         sessionRecordingPolicyManager = SessionRecordingPolicyManager(requireContext())
 
@@ -87,7 +88,7 @@ class BlocklistFragment : Fragment() {
         }
         updateUnsupportedApps()
 
-        viewModel.blockedApps.observe(requireActivity()) { apps ->
+        viewModel.blockedApps.observe(viewLifecycleOwner) { apps ->
             val isEmpty = apps == null || apps.isEmpty()
 
             // Update the cached copy of the blocked apps in the adapter.
@@ -116,6 +117,8 @@ class BlocklistFragment : Fragment() {
 
     override fun onDestroyView() {
         sessionRecordingPolicyManager.destroy()
+        binding.recyclerview.adapter = null
+        _binding = null
         super.onDestroyView()
     }
 
@@ -131,25 +134,28 @@ class BlocklistFragment : Fragment() {
 
     private fun updateUnsupportedApps() {
         if(isRootless()) {
-            policyPollingScope.launch {
+            val appContext = context?.applicationContext ?: return
+            viewLifecycleOwner.lifecycleScope.launch {
                 val isAllowed = preferences.get<Boolean>(R.string.key_session_exclude_restricted)
 
-                restrictedApps = if (!isAllowed) {
-                    arrayOf()
-                } else {
-                    dumpManager.dumpCaptureAllowlistLog()?.let {
-                        sessionRecordingPolicyManager.update(it)
-                    }
+                restrictedApps = withContext(Dispatchers.IO) {
+                    if (!isAllowed) {
+                        arrayOf()
+                    } else {
+                        dumpManager.dumpCaptureAllowlistLog()?.let {
+                            sessionRecordingPolicyManager.update(it)
+                        }
 
-                    sessionRecordingPolicyManager
-                        .getRestrictedUids()
-                        .map { """${requireContext().getAppNameFromUidSafe(it)} (UID $it)""" }
-                        .toTypedArray()
+                        sessionRecordingPolicyManager
+                            .getRestrictedUids()
+                            .map { """${appContext.getAppNameFromUidSafe(it)} (UID $it)""" }
+                            .toTypedArray()
+                    }
                 }
 
-                this@BlocklistFragment.binding.notice.isVisible = restrictedApps.isNotEmpty()
+                binding.notice.isVisible = restrictedApps.isNotEmpty()
                 context?.let {
-                    this@BlocklistFragment.binding.noticeLabel.text = it.resources.getQuantityString(
+                    binding.noticeLabel.text = it.resources.getQuantityString(
                         R.plurals.unsupported_apps,
                         restrictedApps.size,
                         restrictedApps.size

@@ -20,6 +20,7 @@ import androidx.core.content.getSystemService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -67,6 +68,7 @@ abstract class BaseSessionManager(protected val context: Context) : DumpManager.
     // Preferences
     private val preferencesListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val preferences: Preferences.App by inject()
+    private var destroyed = false
 
     protected abstract fun handleSessionDump(sessionDump: ISessionInfoDump?)
 
@@ -103,8 +105,14 @@ abstract class BaseSessionManager(protected val context: Context) : DumpManager.
     @CallSuper
     open fun destroy()
     {
+        if (destroyed) return
+        destroyed = true
         Timber.d("Destroying SessionDumpManager")
 
+        continuousPollingJob?.cancel()
+        continuousPollingJob = null
+        pollingScope.cancel()
+        preferences.unregisterOnSharedPreferenceChangeListener(preferencesListener)
         dumpManager.unregisterOnDumpMethodChangeListener(this)
 
         audioPlaybackCallback?.let { audioManager.unregisterAudioPlaybackCallback(it) }

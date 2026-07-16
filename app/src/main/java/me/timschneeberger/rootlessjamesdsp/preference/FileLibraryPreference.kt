@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import androidx.preference.ListPreference
 import androidx.preference.Preference.SummaryProvider
 import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.dsp.DarwinFilterPackage
 import me.timschneeberger.rootlessjamesdsp.model.preset.Preset
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.toast
 import timber.log.Timber
@@ -97,14 +98,24 @@ class FileLibraryPreference(context: Context, attrs: AttributeSet?) :
         return (isIrs() && hasIrsExtension(it)) ||
                 (isVdc() && hasVdcExtension(it)) ||
                 (isLiveprog() && hasLiveprogExtension(it)) ||
+                (isDarwin() && it.endsWith(".zip", true)) ||
                 (isPreset() && hasPresetExtension(it))
     }
 
     fun hasValidContent(stream: InputStream): Boolean {
-        return if (isPreset())
-            Preset.validate(stream)
-        else
+        if (isPreset()) return Preset.validate(stream)
+        if (!isDarwin()) return true
+
+        val temporary = File.createTempFile("darwin-", ".zip", context.cacheDir)
+        return try {
+            temporary.outputStream().use(stream::copyTo)
+            DarwinFilterPackage.list(temporary)
             true
+        } catch (_: Exception) {
+            false
+        } finally {
+            temporary.delete()
+        }
     }
 
     fun isLiveprog(): Boolean {
@@ -119,12 +130,16 @@ class FileLibraryPreference(context: Context, attrs: AttributeSet?) :
     fun isPreset(): Boolean {
         return type.lowercase() == "presets"
     }
+    fun isDarwin(): Boolean {
+        return type.lowercase() == "darwin"
+    }
 
     companion object {
         val types = mapOf(
             "Convolver" to listOf(".flac", ".wav", ".irs"),
             "Liveprog" to listOf(".eel"),
             "DDC" to listOf(".vdc"),
+            "Darwin" to listOf(".zip"),
             "Presets" to listOf(".tar")
         )
 

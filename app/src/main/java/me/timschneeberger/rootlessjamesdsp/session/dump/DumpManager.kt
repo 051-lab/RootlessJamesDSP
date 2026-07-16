@@ -22,7 +22,7 @@ class DumpManager constructor(val context: Context): KoinComponent {
         AudioFlingerService(2); /* Only used for debugging */
 
         companion object {
-            fun fromInt(value: Int) = values().first { it.value == value }
+            fun fromInt(value: Int) = values().firstOrNull { it.value == value } ?: AudioPolicyService
         }
     }
 
@@ -66,17 +66,17 @@ class DumpManager constructor(val context: Context): KoinComponent {
             return dump
         }
 
-        availableDumpMethods.forEach {
-                Timber.d("Falling back to method: ${it.key.name}")
-
-                if(it.key != activeDumpMethod)
-                {
-                    dump = it.value.dump(context)
-                }
-                if(dump != null && dump!!.sessions.isNotEmpty())
-                {
+        for ((method, provider) in availableDumpMethods) {
+            if (method == activeDumpMethod)
+                continue
+            Timber.d("Falling back to method: ${method.name}")
+            try {
+                dump = provider.dump(context)
+                if (dump?.sessions?.isNotEmpty() == true)
                     return dump
-                }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Fallback session dump failed using ${method.name}")
+            }
         }
 
         Timber.e("Failed to find session info using any method")

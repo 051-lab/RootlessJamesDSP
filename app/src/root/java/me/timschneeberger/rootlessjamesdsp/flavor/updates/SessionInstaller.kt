@@ -20,7 +20,6 @@ class SessionInstaller(private val context: Context) {
     private val intent = Intent(context, SessionInstallerService::class.java)
 
     companion object {
-        private var installerCallbacks = mutableListOf<PackageInstaller.SessionCallback>()
         private val flags = if (SdkCheck.isSnowCake) PendingIntent.FLAG_MUTABLE else 0
         private val sessionParams =
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
@@ -42,38 +41,43 @@ class SessionInstaller(private val context: Context) {
             override fun onActiveChanged(sessionId: Int, active: Boolean) {}
             override fun onProgressChanged(sessionId: Int, progress: Float) {}
             override fun onFinished(sessionId: Int, success: Boolean) {
-                if (sessionId == id) cont.resume(true)
+                if (sessionId != id) return
+
+                runCatching { sessionInstaller.unregisterSessionCallback(this) }
+                if (cont.isActive) cont.resume(success)
             }
         }
-        installerCallbacks.add(installerCallback)
 
         sessionInstaller.registerSessionCallback(
-            installerCallbacks.last(),
+            installerCallback,
             Handler(Looper.getMainLooper())
         )
 
-        sessionInstaller.openSession(id).use { activeSession ->
-            val sizeBytes = cacheFile.length()
-            cacheFile.inputStream().use { fileStream ->
-                activeSession.openWrite(cacheFile.name, 0, sizeBytes).use { outputStream ->
-                    if (cont.isActive) {
-                        fileStream.copyTo(outputStream)
-                        activeSession.fsync(outputStream)
+        try {
+            sessionInstaller.openSession(id).use { activeSession ->
+                val sizeBytes = cacheFile.length()
+                cacheFile.inputStream().use { fileStream ->
+                    activeSession.openWrite(cacheFile.name, 0, sizeBytes).use { outputStream ->
+                        if (cont.isActive) {
+                            fileStream.copyTo(outputStream)
+                            activeSession.fsync(outputStream)
+                        }
                     }
                 }
+
+                val pendingIntent = PendingIntent.getService(context, id, intent, flags)
+
+                if (cont.isActive) activeSession.commit(pendingIntent.intentSender)
             }
-
-            val pendingIntent = PendingIntent.getService(context, id, intent, flags)
-
-            if (cont.isActive) activeSession.commit(pendingIntent.intentSender)
+        } catch (error: Throwable) {
+            runCatching { sessionInstaller.unregisterSessionCallback(installerCallback) }
+            runCatching { sessionInstaller.abandonSession(id) }
+            throw error
         }
+
         cont.invokeOnCancellation {
-            sessionInstaller.abandonSession(id)
+            runCatching { sessionInstaller.unregisterSessionCallback(installerCallback) }
+            runCatching { sessionInstaller.abandonSession(id) }
         }
-    }
-
-    fun cleanup() {
-        installerCallbacks.forEach { sessionInstaller.unregisterSessionCallback(it) }
-        sessionInstaller.mySessions.forEach { sessionInstaller.abandonSession(it.sessionId) }
     }
 }

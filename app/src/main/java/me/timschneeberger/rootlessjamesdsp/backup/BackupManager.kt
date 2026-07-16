@@ -21,6 +21,7 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import timber.log.Timber
 import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,16 +109,17 @@ class BackupManager(private val context: Context): KoinComponent {
     fun restoreBackup(uri: Uri, dirty: Boolean) {
         Timber.d("Restoring backup from $uri")
 
-        context.contentResolver.openInputStream(uri)!!.source().gzip().buffer().inputStream().use { stream ->
-            val targetFolder = File(context.cacheDir, "restore")
+        val targetFolder = File(context.cacheDir, "restore")
+        try {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: throw UnsupportedOperationException(context.getString(R.string.backup_restore_error_format))
+            input.source().gzip().buffer().inputStream().use { stream ->
             val metadata = Tar.Reader(stream, ::isKnownFile).extract(targetFolder)
-            if(metadata == null) {
-                targetFolder.deleteRecursively()
+            if(metadata == null || !isValidBackup(metadata, targetFolder.walkTopDown().any(File::isFile))) {
                 throw UnsupportedOperationException(context.getString(R.string.backup_restore_error_format))
             }
 
             if(BuildConfig.VERSION_CODE < (metadata[META_MIN_VERSION_CODE]?.toIntOrNull() ?: 0)) {
-                targetFolder.deleteRecursively()
                 throw UnsupportedOperationException(context.getString(R.string.backup_restore_error_version_too_new))
             }
 
@@ -148,18 +150,21 @@ class BackupManager(private val context: Context): KoinComponent {
                         true
                     )
                 }
-                else if(file.isDirectory && FileLibraryPreference.types.any { file.name.startsWith(it.key) }) {
-                    file.copyRecursively(File(context.getExternalFilesDir(null)!!.absolutePath + "/" + file.name), true)
+                else if(file.isDirectory && FileLibraryPreference.types.containsKey(file.name)) {
+                    val externalRoot = context.getExternalFilesDir(null)
+                        ?: throw IOException("External files directory is unavailable")
+                    file.copyRecursively(File(externalRoot, file.name), true)
                 }
             }
-
-            targetFolder.deleteRecursively()
 
             context.broadcastPresetLoadEvent()
             context.sendLocalBroadcast(Intent(Constants.ACTION_BACKUP_RESTORED))
 
             if(enableDeviceProfiles)
                 preferences.set(R.string.key_device_profiles_enable, true)
+            }
+        } finally {
+            targetFolder.deleteRecursively()
         }
     }
 
@@ -169,10 +174,16 @@ class BackupManager(private val context: Context): KoinComponent {
         private const val META_HAS_DEVICE_PROFILES = "has_device_profiles"
         const val META_IS_BACKUP = "is_backup"
 
+        internal fun isValidBackup(metadata: Map<String, String>, hasPayload: Boolean): Boolean =
+            metadata[META_IS_BACKUP] == true.toString() && hasPayload
+
         private fun isKnownFile(name: String): Boolean {
-            return (name.contains("dsp_") && name.endsWith(".xml")) ||
-                    name.startsWith("profiles/") ||
-                    FileLibraryPreference.types.any { name.contains(it.key) && it.value.any { ext -> name.endsWith(ext) } }
+            val parts = name.split('/')
+            return parts.size == 2 && parts[0] == "shared_prefs" &&
+                    parts[1].startsWith("dsp_") && parts[1].endsWith(".xml") ||
+                    parts.size > 1 && parts[0] == "profiles" ||
+                    parts.size == 2 && FileLibraryPreference.types[parts[0]]
+                        ?.any(parts[1]::endsWith) == true
         }
 
         fun getBackupFilename(): String {

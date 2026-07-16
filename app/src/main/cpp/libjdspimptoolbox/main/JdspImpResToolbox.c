@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#include <limits.h>
 
 #include <jdsp_header.h>
 
@@ -82,25 +83,41 @@ void freeMpsFFTData(fftData *fd)
 	free(fd->mBitRev);
 	free(fd->mSineTab);
 }
-void initMpsFFTData(fftData *fd, unsigned int xLen, float threshdB)
+int initMpsFFTData(fftData *fd, unsigned int xLen, float threshdB)
 {
+	memset(fd, 0, sizeof(*fd));
 	fd->xLen = xLen;
 	fd->fftLen = upper_power_of_two(xLen);
+	if (fd->fftLen < xLen || fd->fftLen > UINT_MAX / sizeof(float))
+		return 0;
 	fd->halfLen = fd->fftLen >> 1;
 	fd->halfLenWdc = fd->halfLen + 1;
 	fd->mBitRev = (unsigned int*)malloc(fd->fftLen * sizeof(unsigned int));
 	fd->mSineTab = (float*)malloc(fd->fftLen * sizeof(float));
+	if (!fd->mBitRev || !fd->mSineTab)
+	{
+		freeMpsFFTData(fd);
+		memset(fd, 0, sizeof(*fd));
+		return 0;
+	}
 	LLbitReversalTbl(fd->mBitRev, fd->fftLen);
 	LLsinHalfTblFloat(fd->mSineTab, fd->fftLen);
 	fd->threshold = powf(10.0f, threshdB / 20.0f);
 	fd->logThreshold = logf(fd->threshold);
 	fd->normalizeGain = 1.0f / fd->fftLen;
+	return 1;
 }
-void mps(fftData *fd, float *x, float *y)
+int mps(fftData *fd, float *x, float *y)
 {
 	unsigned int i;
 	float *padded = (float*)malloc(fd->fftLen * sizeof(float));
 	float *ceptrum = (float*)malloc(fd->fftLen * sizeof(float));
+	if (!padded || !ceptrum)
+	{
+		free(padded);
+		free(ceptrum);
+		return 0;
+	}
 	for (i = 0; i < fd->xLen; i++)
 		padded[fd->mBitRev[i]] = x[i];
 	for (; i < fd->fftLen; i++)
@@ -151,21 +168,7 @@ void mps(fftData *fd, float *x, float *y)
 		y[i] = ceptrum[i] * fd->normalizeGain;
 	free(padded);
 	free(ceptrum);
-}
-#include "cpthread.h"
-typedef struct
-{
-	int rangeMin, rangeMax;
-	fftData *fd;
-	float **x, **y;
-	int sampleShift;
-} mpsThread;
-void* mpsMulticore(void *args)
-{
-	mpsThread *th = (mpsThread*)args;
-	for (int i = th->rangeMin; i < th->rangeMax; i++)
-		mps(th->fd, &th->x[i][th->sampleShift], th->y[i]);
-	return 0;
+	return 1;
 }
 void checkStartEnd(float **signal, int channels, int nsamples, float normalizedDbCutoff1, float normalizedDbCutoff2, int range[2])
 {
@@ -173,10 +176,10 @@ void checkStartEnd(float **signal, int channels, int nsamples, float normalizedD
 	float max = fabsf(signal[0][0]);
 	for (i = 0; i < channels; i++)
 	{
-		for (j = 1; j < nsamples; j++)
+		for (j = 0; j < nsamples; j++)
 		{
 			if (fabsf(signal[i][j]) > max)
-				max = signal[i][j];
+				max = fabsf(signal[i][j]);
 		}
 	}
 	max = 1.0f / ((max < FLT_EPSILON) ? (max + FLT_EPSILON) : max);
@@ -371,16 +374,20 @@ void JamesDSPOfflineResampling(float const *in, float *out, size_t lenIn, size_t
 }
 float* loadAudioFile(const char *filename, double targetFs, unsigned int *channels, drwav_uint64 *totalPCMFrameCount, int resampleQuality)
 {
-	unsigned int fs = 1;
+	if (!filename || !channels || !totalPCMFrameCount || targetFs <= 0.0)
+		return 0;
+	*channels = 0;
+	*totalPCMFrameCount = 0;
+	unsigned int fs = 0;
     const char *ext = get_filename_ext(filename);
     float *pSampleData = 0;
     if (!strncmp(ext, "wav", 5) || !strncmp(ext, "irs", 5))
         pSampleData = drwav_open_file_and_read_pcm_frames_f32(filename, channels, &fs, totalPCMFrameCount, 0);
-    if (!strncmp(ext, "flac", 5))
+    else if (!strncmp(ext, "flac", 5))
         pSampleData = drflac_open_file_and_read_pcm_frames_f32(filename, channels, &fs, totalPCMFrameCount, 0);
-    if (!strncmp(ext, "mp3", 5))
+    else if (!strncmp(ext, "mp3", 5))
     {
-        drmp3_config mp3Conf;
+        drmp3_config mp3Conf = { 0 };
         pSampleData = drmp3_open_file_and_read_pcm_frames_f32(filename, &mp3Conf, totalPCMFrameCount, 0);
         *channels = mp3Conf.channels;
         fs = mp3Conf.sampleRate;
@@ -391,24 +398,29 @@ float* loadAudioFile(const char *filename, double targetFs, unsigned int *channe
 		return 0;
 	}
 	// Sanity check
-	if (*channels < 1)
+	if (*channels < 1 || fs < 1 || *totalPCMFrameCount < 1)
 	{
-		printf("Invalid audio channels count");
-		free(pSampleData);
-		return 0;
-	}
-	if ((*totalPCMFrameCount <= 0) || (*totalPCMFrameCount <= 0))
-	{
-		printf("Invalid audio sample rate / frame count");
+		printf("Invalid audio metadata");
 		free(pSampleData);
 		return 0;
 	}
 	double ratio = targetFs / (double)fs;
 	if (ratio != 1.0)
 	{
-		int compressedLen = (int)ceil(*totalPCMFrameCount * ratio);
-		float *tmpBuf = (float*)malloc(compressedLen * *channels * sizeof(float));
-		memset(tmpBuf, 0, compressedLen * *channels * sizeof(float));
+		double compressedFrames = ceil(*totalPCMFrameCount * ratio);
+		if (!isfinite(compressedFrames) || compressedFrames < 1.0 ||
+			compressedFrames > SIZE_MAX / *channels / sizeof(float))
+		{
+			free(pSampleData);
+			return 0;
+		}
+		size_t compressedLen = (size_t)compressedFrames;
+		float *tmpBuf = (float*)calloc(compressedLen * *channels, sizeof(float));
+		if (!tmpBuf)
+		{
+			free(pSampleData);
+			return 0;
+		}
 		JamesDSPOfflineResampling(pSampleData, tmpBuf, *totalPCMFrameCount, compressedLen, *channels, ratio, resampleQuality);
 		*totalPCMFrameCount = compressedLen;
 		free(pSampleData);
@@ -430,70 +442,73 @@ int validateAdvImpParameter(int frameCount, int convMode, jint* advSetPtr, jsize
 JNIEXPORT jfloatArray JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpResToolbox_ReadImpulseResponseToFloat
 (JNIEnv *env, jobject obj, jstring path, jint targetSampleRate, jintArray jImpInfo, jint convMode, jintArray jadvParam)
 {
-	const char *mIRFileName = (*env)->GetStringUTFChars(env, path, 0);
-	if (strlen(mIRFileName) <= 0) return 0;
-	unsigned int channels;
-	drwav_uint64 frameCount;
-	float *pFrameBuffer = loadAudioFile(mIRFileName, targetSampleRate, &channels, &frameCount, 1);
-	if (channels == 0 || channels == 3 || channels > 4)
-	{
-		free(pFrameBuffer);
+	const char *mIRFileName = 0;
+	jint *javaAdvSetPtr = 0;
+	float *pFrameBuffer = 0;
+	float *splittedBuffer[4] = { 0 };
+	jfloatArray outbuf = 0;
+	unsigned int channels = 0;
+	drwav_uint64 frameCount = 0;
+	int isAdvSetValid = 0;
+	int32_t crc32 = 0;
+
+	if (!path || !jImpInfo || !jadvParam || targetSampleRate <= 0 || convMode < 0 || convMode > 2 ||
+		(*env)->GetArrayLength(env, jImpInfo) < 4 || (*env)->GetArrayLength(env, jadvParam) != 6)
 		return 0;
+
+	mIRFileName = (*env)->GetStringUTFChars(env, path, 0);
+	if (!mIRFileName || !*mIRFileName)
+		goto cleanup;
+
+	pFrameBuffer = loadAudioFile(mIRFileName, targetSampleRate, &channels, &frameCount, 1);
+	if (!pFrameBuffer || (channels != 1 && channels != 2 && channels != 4) ||
+		frameCount < 1 || frameCount > INT_MAX / 2)
+		goto cleanup;
+
+	javaAdvSetPtr = (*env)->GetIntArrayElements(env, jadvParam, 0);
+	if (!javaAdvSetPtr)
+		goto cleanup;
+
+	isAdvSetValid = validateAdvImpParameter((int)frameCount, convMode, javaAdvSetPtr, 6);
+	if (!isAdvSetValid)
+	{
+		javaAdvSetPtr[0] = -80;
+		javaAdvSetPtr[1] = -100;
+		javaAdvSetPtr[2] = 0;
+		javaAdvSetPtr[3] = 0;
+		javaAdvSetPtr[4] = 0;
+		javaAdvSetPtr[5] = 0;
 	}
-	jint *javaAdvSetPtr = (jint*) (*env)->GetIntArrayElements(env, jadvParam, 0);
-    jsize javaAdvSetSize = (*env)->GetArrayLength(env, jadvParam);
 
-    if(javaAdvSetSize != 6) {
-        return 0;
-    }
-
-    int isAdvSetValid = validateAdvImpParameter(frameCount, convMode, javaAdvSetPtr, javaAdvSetSize);
-    if(!isAdvSetValid) {
-        // Overwrite invalid advanced params
-        javaAdvSetPtr[0] = -80;
-        javaAdvSetPtr[1] = -100;
-        javaAdvSetPtr[2] = 0;
-        javaAdvSetPtr[3] = 0;
-        javaAdvSetPtr[4] = 0;
-        javaAdvSetPtr[5] = 0;
-    }
-
-	int i;
-	float *splittedBuffer[4];
-	int alloc = frameCount;
+	int alloc = (int)frameCount;
 	if (alloc < 8)
 		alloc = 8;
-	for (i = 0; i < channels; i++)
+	int splitLength = convMode == 2 ? alloc * 2 : (int)frameCount;
+	for (unsigned int i = 0; i < channels; i++)
 	{
-		if (convMode == 2)
-		{
-			splittedBuffer[i] = (float*)malloc(alloc * 2 * sizeof(float));
-			memset(splittedBuffer[i], 0, alloc * 2 * sizeof(float));
-		}
-		else
-			splittedBuffer[i] = (float*)malloc(frameCount * sizeof(float));
+		splittedBuffer[i] = (float*)calloc((size_t)splitLength, sizeof(float));
+		if (!splittedBuffer[i])
+			goto cleanup;
 	}
-	channel_splitFloat(pFrameBuffer, frameCount, splittedBuffer, channels);
-    int32_t crc32;
+	channel_splitFloat(pFrameBuffer, (unsigned int)frameCount, splittedBuffer, channels);
+
 	if (convMode > 0)
 	{
 		free(pFrameBuffer);
+		pFrameBuffer = 0;
 		int range[2];
+		float *outPtr[4] = { 0 };
 		float startCutdB = javaAdvSetPtr[0];
 		float endCutdB = javaAdvSetPtr[1];
-		if (convMode == 1)
-			checkStartEnd(splittedBuffer, channels, frameCount, startCutdB, endCutdB, range);
-		else
-		{
-			range[0] = 0;
-			range[1] = alloc * 2;
-		}
-		float *outPtr[4];
-		int xLen = range[1] - range[0];
+		int xLen;
+
 		if (convMode == 1)
 		{
-			checkStartEnd(splittedBuffer, channels, frameCount, startCutdB, endCutdB, range);
-			for (i = 0; i < channels; i++)
+			checkStartEnd(splittedBuffer, channels, (int)frameCount, startCutdB, endCutdB, range);
+			xLen = range[1] - range[0];
+			if (xLen < 1)
+				goto cleanup;
+			for (unsigned int i = 0; i < channels; i++)
 			{
 				outPtr[i] = &splittedBuffer[i][range[0]];
 				circshift(outPtr[i], xLen, javaAdvSetPtr[i + 2]);
@@ -503,74 +518,79 @@ JNIEXPORT jfloatArray JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_J
 		}
 		else
 		{
+			xLen = splitLength;
 			fftData fd;
-			initMpsFFTData(&fd, xLen, -80.0f);
-			int spawnNthread = channels - 1;
-			if (spawnNthread + 1 > channels)
-				spawnNthread = channels - 1;
-			int taskPerThread = channels / (spawnNthread + 1);
-			pthread_t *pthread = (pthread_t*)malloc(spawnNthread * sizeof(pthread_t));
-			mpsThread *th = (mpsThread*)malloc(spawnNthread * sizeof(mpsThread));
-			for (i = 0; i < spawnNthread; i++)
+			if (!initMpsFFTData(&fd, (unsigned int)xLen, -80.0f))
+				goto cleanup;
+			// ponytail: at most four offline channels; parallelize only if profiling shows import latency matters.
+			for (unsigned int i = 0; i < channels; i++)
 			{
-				th[i].rangeMin = (i + 1) * taskPerThread;
-				if (i < spawnNthread - 1)
-					th[i].rangeMax = th[i].rangeMin + taskPerThread;
-				th[i].fd = &fd;
-				th[i].x = splittedBuffer;
-				th[i].y = splittedBuffer;
-				th[i].sampleShift = range[0];
+				if (!mps(&fd, splittedBuffer[i], splittedBuffer[i]))
+				{
+					freeMpsFFTData(&fd);
+					goto cleanup;
+				}
 			}
-			th[spawnNthread - 1].rangeMax = channels;
-			for (i = 0; i < spawnNthread; i++)
-				pthread_create(&pthread[i], 0, mpsMulticore, &th[i]);
-			for (i = 0; i < taskPerThread; i++)
-				mps(&fd, &splittedBuffer[i][range[0]], splittedBuffer[i]);
-			for (i = 0; i < spawnNthread; i++)
-				pthread_join(pthread[i], 0);
-			free(pthread);
-			free(th);
 			freeMpsFFTData(&fd);
 			checkStartEnd(splittedBuffer, channels, alloc, startCutdB, endCutdB, range);
 			xLen = range[1];
-			for (i = 0; i < channels; i++)
+			if (xLen < 1)
+				goto cleanup;
+			for (unsigned int i = 0; i < channels; i++)
 			{
-				outPtr[i] = &splittedBuffer[i][0];
+				outPtr[i] = splittedBuffer[i];
 				circshift(outPtr[i], xLen, javaAdvSetPtr[i + 2]);
 				for (int j = 0; j < javaAdvSetPtr[i + 2] - 1; j++)
 					outPtr[i][j] = 0.0f;
 			}
 		}
-		unsigned int totalFrames = xLen * channels;
-		frameCount = xLen;
-		pFrameBuffer = (float*)malloc(totalFrames * sizeof(float));
-        crc32 = channel_joinFloat_crc(outPtr, channels, pFrameBuffer, xLen);
+
+		if (xLen > INT_MAX / channels || (size_t)xLen > SIZE_MAX / channels / sizeof(float))
+			goto cleanup;
+		pFrameBuffer = (float*)malloc((size_t)xLen * channels * sizeof(float));
+		if (!pFrameBuffer)
+			goto cleanup;
+		crc32 = channel_joinFloat_crc(outPtr, channels, pFrameBuffer, (unsigned int)xLen);
+		frameCount = (drwav_uint64)xLen;
 	}
 	else
 	{
-		for (i = 0; i < channels; i++)
+		if (frameCount > INT_MAX / channels)
+			goto cleanup;
+		for (unsigned int i = 0; i < channels; i++)
 		{
-			circshift(splittedBuffer[i], frameCount, javaAdvSetPtr[i + 2]);
+			circshift(splittedBuffer[i], (int)frameCount, javaAdvSetPtr[i + 2]);
 			for (int j = 0; j < javaAdvSetPtr[i + 2] - 1; j++)
 				splittedBuffer[i][j] = 0.0f;
 		}
-        crc32 = channel_joinFloat_crc(splittedBuffer, channels, pFrameBuffer, frameCount);
+		crc32 = channel_joinFloat_crc(splittedBuffer, channels, pFrameBuffer, (unsigned int)frameCount);
 	}
-	for (i = 0; i < channels; i++)
+
+	if (frameCount > INT_MAX / channels)
+		goto cleanup;
+	jint basicInfo[4] = { (jint)channels, (jint)frameCount, (jint)crc32, (jint)isAdvSetValid };
+	(*env)->SetIntArrayRegion(env, jImpInfo, 0, 4, basicInfo);
+	if ((*env)->ExceptionCheck(env))
+		goto cleanup;
+	jsize frameCountTotal = (jsize)(channels * frameCount);
+	outbuf = (*env)->NewFloatArray(env, frameCountTotal);
+	if (!outbuf)
+		goto cleanup;
+	(*env)->SetFloatArrayRegion(env, outbuf, 0, frameCountTotal, pFrameBuffer);
+	if ((*env)->ExceptionCheck(env))
+	{
+		(*env)->DeleteLocalRef(env, outbuf);
+		outbuf = 0;
+	}
+
+cleanup:
+	for (int i = 0; i < 4; i++)
 		free(splittedBuffer[i]);
-	(*env)->ReleaseIntArrayElements(env, jadvParam, javaAdvSetPtr, 0);
-	jint *javaBasicInfoPtr = (jint*) (*env)->GetIntArrayElements(env, jImpInfo, 0);
-	javaBasicInfoPtr[0] = (int)channels;
-	javaBasicInfoPtr[1] = (int)frameCount;
-	javaBasicInfoPtr[2] = (int)crc32;
-    javaBasicInfoPtr[3] = (int)isAdvSetValid;
-    (*env)->SetIntArrayRegion(env, jImpInfo, 0, 4, javaBasicInfoPtr);
-	jfloatArray outbuf;
-	int frameCountTotal = channels * frameCount;
-	size_t bufferSize = frameCountTotal * sizeof(float);
-	outbuf = (*env)->NewFloatArray(env, (jsize)frameCountTotal);
-	(*env)->SetFloatArrayRegion(env, outbuf, 0, (jsize)frameCountTotal, pFrameBuffer);
 	free(pFrameBuffer);
+	if (javaAdvSetPtr)
+		(*env)->ReleaseIntArrayElements(env, jadvParam, javaAdvSetPtr, 0);
+	if (mIRFileName)
+		(*env)->ReleaseStringUTFChars(env, path, mIRFileName);
 	return outbuf;
 }
 JNIEXPORT jstring JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpResToolbox_OfflineAudioResample

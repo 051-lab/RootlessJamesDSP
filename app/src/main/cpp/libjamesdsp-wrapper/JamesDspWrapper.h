@@ -6,7 +6,6 @@
 typedef struct
 {
     void* dsp;
-    JNIEnv* env;
     jobject callbackInterface;
     jmethodID callbackOnLiveprogOutput;
     jmethodID callbackOnLiveprogExec;

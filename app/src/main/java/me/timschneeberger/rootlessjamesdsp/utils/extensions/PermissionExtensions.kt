@@ -21,11 +21,20 @@ object PermissionExtensions {
         return try {
             val applicationInfo = packageManager.getApplicationInfoCompat(packageName, 0)
             val appOpsManager = getSystemService<AppOpsManager>()
-            val mode = appOpsManager!!.unsafeCheckOpNoThrow(
-                appOp,
-                applicationInfo.uid,
-                applicationInfo.packageName
-            )
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOpsManager!!.unsafeCheckOpNoThrow(
+                    appOp,
+                    applicationInfo.uid,
+                    applicationInfo.packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOpsManager!!.checkOpNoThrow(
+                    appOp,
+                    applicationInfo.uid,
+                    applicationInfo.packageName
+                )
+            }
             mode == AppOpsManager.MODE_ALLOWED
         } catch (e: Exception) {
             Timber.e(e)

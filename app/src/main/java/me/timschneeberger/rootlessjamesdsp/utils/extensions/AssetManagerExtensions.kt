@@ -14,6 +14,8 @@ object AssetManagerExtensions {
                 this.copyAssetDir("Convolver", it, force)
                 this.copyAssetDir("DDC", it, force)
                 this.copyAssetDir("Liveprog", it, force)
+                if (!this.list("Darwin").isNullOrEmpty())
+                    this.copyAssetDir("Darwin", it, force)
             }
             catch (ex: Exception) {
                 Timber.e("Failed to extract assets")

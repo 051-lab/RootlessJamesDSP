@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup
+        android:key="@string/key_darwin_enable"
+        android:disableDependentsState="false"
+        android:title="@string/darwin_enable"
+        android:summary="@string/darwin_summary"
+        android:icon="@drawable/ic_baseline_waveform_24dp"
+        app:iconSpaceReserved="false">
+        <me.timschneeberger.rootlessjamesdsp.preference.FileLibraryPreference
+            android:key="@string/key_darwin_file"
+            android:title="@string/darwin_package"
+            android:defaultValue=""
+            app:type="Darwin"
+            app:iconSpaceReserved="false" />
+        <ListPreference
+            android:key="@string/key_darwin_filter"
+            android:title="@string/darwin_filter"
+            android:defaultValue=""
+            app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_darwin_harmonic"
+            android:title="@string/darwin_harmonic"
+            android:defaultValue="0"
+            app:minValue="0"
+            app:maxValue="100"
+            app:unit="%%"
+            app:updatesContinuously="false"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSwitchPreference
+            android:key="@string/key_darwin_auto_headroom"
+            android:title="@string/darwin_auto_headroom"
+            android:summary="@string/darwin_auto_headroom_summary"
+            android:defaultValue="true"
+            app:iconSpaceReserved="false" />
+    </me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup>
+</PreferenceScreen>

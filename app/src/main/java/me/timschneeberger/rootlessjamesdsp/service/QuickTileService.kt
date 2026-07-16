@@ -1,5 +1,6 @@
 package me.timschneeberger.rootlessjamesdsp.service
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -77,6 +78,8 @@ class QuickTileService : TileService(),
     }
 
     // Called when the user taps on your tile in an active or inactive state.
+    @Suppress("DEPRECATION")
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
 

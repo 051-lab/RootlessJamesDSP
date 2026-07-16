@@ -33,7 +33,8 @@ import timber.log.Timber
 import java.util.UUID
 
 class ParametricEqualizerFragment : Fragment() {
-    private lateinit var binding: FragmentParametricEqBinding
+    private var _binding: FragmentParametricEqBinding? = null
+    private val binding get() = _binding!!
 
     private val adapter: ParametricEqBandAdapter
         get() = binding.bandList.adapter as ParametricEqBandAdapter
@@ -43,16 +44,19 @@ class ParametricEqualizerFragment : Fragment() {
     private var editorActive = false
         set(value) {
             field = value
-            binding.add.isEnabled = !value
-            binding.reset.isEnabled = !value
-            binding.importFile.isEnabled = !value
-            binding.exportFile.isEnabled = !value
-            binding.editString.isEnabled = !value
+            _binding?.let {
+                it.add.isEnabled = !value
+                it.reset.isEnabled = !value
+                it.importFile.isEnabled = !value
+                it.exportFile.isEnabled = !value
+                it.editString.isEnabled = !value
+            }
         }
 
     private val importFileLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             uri ?: return@registerForActivityResult
+            if (_binding == null) return@registerForActivityResult
             try {
                 val text = requireContext().contentResolver.openInputStream(uri)
                     ?.bufferedReader()?.use { it.readText() } ?: return@registerForActivityResult
@@ -79,6 +83,7 @@ class ParametricEqualizerFragment : Fragment() {
     private val exportFileLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
             uri ?: return@registerForActivityResult
+            if (_binding == null) return@registerForActivityResult
             try {
                 val apoString = adapter.bands.toApoString(binding.preampInput.value.toDouble())
                 requireContext().contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
@@ -114,12 +119,18 @@ class ParametricEqualizerFragment : Fragment() {
         super.onDestroy()
     }
 
+    override fun onDestroyView() {
+        binding.bandList.adapter = null
+        _binding = null
+        super.onDestroyView()
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentParametricEqBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentParametricEqBinding.inflate(layoutInflater, container, false)
 
         binding.previewCard.setOnClickListener {
             if (resources.configuration.orientation != ORIENTATION_LANDSCAPE) {

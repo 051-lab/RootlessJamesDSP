@@ -75,7 +75,7 @@ open class EelNumberRangeProperty<T:Number>(
 
     companion object : IPropertyCompanion {
         private fun matchVariable(key: String, contents: String): MatchResult? {
-            val regex = """$key\s*=\s*(-?\d+\.?\d*)\s*;""".toRegex()
+            val regex = """(?<!\w)${Regex.escape(key)}\s*=\s*($EEL_NUMBER_PATTERN)\s*;""".toRegex()
             return regex.find(contents)
         }
 
@@ -86,35 +86,40 @@ open class EelNumberRangeProperty<T:Number>(
 
         fun replaceVariable(key: String, replacement: String, contents: String): String? {
             val match = matchVariable(key, contents)
-            match ?: return null
-
-            return match.groups[1]?.range?.let {
-                contents.replaceRange(it, replacement)
-            }
+            return replaceOrInsertAssignment(key, replacement, contents, match)
         }
 
-        override val definitionRegex =
-            """(?<var>\w+):(?<def>-?\d+\.?\d*)?<(?<min>-?\d+\.?\d*),(?<max>-?\d+\.?\d*),?(?<step>-?\d+\.?\d*)?>(?<desc>[\s\S][^\n]*)""".toRegex()
+        override val definitionRegex = Regex(
+            """^\s*(?://\s*)?(?<var>\w+)\s*:\s*(?<def>$EEL_NUMBER_PATTERN)?\s*<\s*(?<min>$EEL_NUMBER_PATTERN)\s*,\s*(?<max>$EEL_NUMBER_PATTERN)(?:\s*,\s*(?<step>$EEL_NUMBER_PATTERN))?\s*>\s*(?<desc>.*)\s*$"""
+        )
 
         override fun parse(line: String, contents: String): EelBaseProperty? {
             val matchRange = definitionRegex.find(line)
             val groupsRange = matchRange?.groups
             groupsRange ?: return null
 
-            val key = groupsRange[1]?.value
-            val def = groupsRange[2]?.value
-            val min = groupsRange[3]?.value
-            val max = groupsRange[4]?.value
-            val step = groupsRange[5]?.value ?: "0.1"
-            val desc = groupsRange[6]?.value?.trim()
+            val key = groupsRange["var"]?.value
+            val def = groupsRange["def"]?.value
+            val min = groupsRange["min"]?.value
+            val max = groupsRange["max"]?.value
+            val step = groupsRange["step"]?.value ?: "0.1"
+            val desc = groupsRange["desc"]?.value?.trim()
 
             if (key == null || desc == null || min == null || max == null) {
                 return null
             }
 
-            val current = findVariable(key, contents)
-            if (current == null) {
-                Timber.e("Failed to find current value of number range parameter (key=$key)")
+            val defaultValue = def?.toFloatOrNull()
+            val current = findVariable(key, contents) ?: defaultValue
+            val minimum = min.toFloatOrNull()
+            val maximum = max.toFloatOrNull()
+            val stepValue = step.toFloatOrNull()
+            if ((def != null && defaultValue == null) || current == null || minimum == null ||
+                maximum == null || stepValue == null ||
+                !current.isFinite() || !minimum.isFinite() || !maximum.isFinite() ||
+                !stepValue.isFinite() || stepValue <= 0f || defaultValue?.isFinite() == false
+            ) {
+                Timber.e("Invalid number range parameter (key=$key)")
                 return null
             }
 
@@ -122,13 +127,13 @@ open class EelNumberRangeProperty<T:Number>(
                 return EelNumberRangeProperty(
                     key,
                     desc,
-                    def?.toFloatOrNull(),
+                    defaultValue,
                     current,
-                    min.toFloat(),
-                    max.toFloat(),
-                    step.toFloatOrNull() ?: 0.1
+                    minimum,
+                    maximum,
+                    stepValue
                 ).also { Timber.d("Found number range property: $it") }
-            } catch (ex: NumberFormatException) {
+            } catch (ex: IllegalArgumentException) {
                 Timber.e("Failed to parse number range parameter (key=$key)")
                 Timber.e(ex)
             }

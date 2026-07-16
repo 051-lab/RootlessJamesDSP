@@ -37,6 +37,7 @@ class JamesDspRemoteEngine(
                 Constants.ACTION_SAMPLE_RATE_UPDATED -> syncWithPreferences(arrayOf(Constants.PREF_CONVOLVER))
                 Constants.ACTION_PREFERENCES_UPDATED -> syncWithPreferences()
                 Constants.ACTION_SERVICE_RELOAD_LIVEPROG -> syncWithPreferences(arrayOf(Constants.PREF_LIVEPROG))
+                Constants.ACTION_SERVICE_UPDATE_LIVEPROG_PARAMETER -> syncWithPreferences(arrayOf(Constants.PREF_LIVEPROG))
                 Constants.ACTION_SERVICE_HARD_REBOOT_CORE -> rebootEngine()
                 Constants.ACTION_SERVICE_SOFT_REBOOT_CORE -> { clearCache(); syncWithPreferences() }
             }
@@ -63,6 +64,7 @@ class JamesDspRemoteEngine(
         filter.addAction(Constants.ACTION_PREFERENCES_UPDATED)
         filter.addAction(Constants.ACTION_SAMPLE_RATE_UPDATED)
         filter.addAction(Constants.ACTION_SERVICE_RELOAD_LIVEPROG)
+        filter.addAction(Constants.ACTION_SERVICE_UPDATE_LIVEPROG_PARAMETER)
         filter.addAction(Constants.ACTION_SERVICE_HARD_REBOOT_CORE)
         filter.addAction(Constants.ACTION_SERVICE_SOFT_REBOOT_CORE)
         context.registerLocalReceiver(broadcastReceiver, filter)

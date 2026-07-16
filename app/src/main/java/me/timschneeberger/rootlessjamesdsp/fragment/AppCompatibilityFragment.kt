@@ -11,6 +11,9 @@ import androidx.core.content.getSystemService
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.MainApplication
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.activity.MainActivity
@@ -27,11 +30,10 @@ import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.ge
 import me.timschneeberger.rootlessjamesdsp.utils.isRootless
 import me.timschneeberger.rootlessjamesdsp.utils.notifications.Notifications
 import timber.log.Timber
-import java.util.Timer
-import kotlin.concurrent.schedule
 
 class AppCompatibilityFragment : Fragment() {
-    private lateinit var binding: FragmentAppCompatibilityBinding
+    private var _binding: FragmentAppCompatibilityBinding? = null
+    private val binding get() = _binding!!
     private val viewModel: AppBlocklistViewModel by viewModels {
         AppBlocklistViewModelFactory((requireActivity().application as MainApplication).blockedAppRepository)
     }
@@ -54,7 +56,7 @@ class AppCompatibilityFragment : Fragment() {
         val appName = requireContext().getAppNameFromUidSafe(appUid)
         val appIcon = requireContext().getAppIcon(appPackage) ?: requireContext().getAppIcon("android")
 
-        binding = FragmentAppCompatibilityBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentAppCompatibilityBinding.inflate(layoutInflater, container, false)
 
         binding.icon.setImageDrawable(appIcon)
         binding.appName.text = appName
@@ -84,7 +86,8 @@ class AppCompatibilityFragment : Fragment() {
                     RootlessAudioProcessorService.start(requireContext(), it)
             }
 
-            Timer("Close", false).schedule(300L) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                delay(300L)
                 activity?.finish()
                 if(internalCall)
                     startActivity(Intent(requireContext(), MainActivity::class.java))
@@ -98,21 +101,26 @@ class AppCompatibilityFragment : Fragment() {
             Timber.d("Requesting exclude of $appPackage")
             viewModel.insert(BlockedApp(appUid, appPackage, appName))
 
-            Timer("Reboot", false).schedule(100L) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                delay(100L)
                 projectIntent?.let {
                     if (isRootless() && SdkCheck.isQ)
                         RootlessAudioProcessorService.start(requireContext(), it)
                 }
 
-                Timer("Close", false).schedule(300L) {
-                    activity?.finish()
-                    if(internalCall)
-                        startActivity(Intent(requireContext(), MainActivity::class.java))
-                }
+                delay(300L)
+                activity?.finish()
+                if(internalCall)
+                    startActivity(Intent(requireContext(), MainActivity::class.java))
             }
         }
 
         return binding.root
+    }
+
+    override fun onDestroyView() {
+        _binding = null
+        super.onDestroyView()
     }
 
     @StringRes

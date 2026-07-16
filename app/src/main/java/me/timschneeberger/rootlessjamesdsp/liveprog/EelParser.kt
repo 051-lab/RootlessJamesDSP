@@ -95,9 +95,19 @@ class EelParser {
         if(skipProperties)
             return
 
-        // Parse number range parameters
-        contents?.lines()?.forEach next@ {
-            EelPropertyFactory.create(it, contents!!)?.let(properties::add)
+        val source = contents ?: return
+        val keys = hashSetOf<String>()
+        for (line in source.lineSequence()) {
+            if (line.trimStart().startsWith("@"))
+                break
+
+            EelPropertyFactory.create(line, source)?.let { property ->
+                if (keys.add(property.key))
+                    properties.add(property)
+            }
+
+            if (properties.size == MAX_PROPERTIES)
+                break
         }
     }
 
@@ -208,5 +218,9 @@ class EelParser {
         tags = match?.groups?.get(1)?.value?.trim()?.split(" ")?.map(String::trim) ?: listOf()
 
         Timber.d("Found tags: $tags")
+    }
+
+    private companion object {
+        const val MAX_PROPERTIES = 128
     }
 }

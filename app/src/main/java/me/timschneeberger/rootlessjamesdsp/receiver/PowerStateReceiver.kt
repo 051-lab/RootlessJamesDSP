@@ -10,6 +10,7 @@ class PowerStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         intent ?: return
         context ?: return
+        if (intent.action != ACTION_SET_POWER_STATE || !intent.hasExtra(EXTRA_ENABLED)) return
 
         Timber.d("Received power state broadcast")
 
@@ -17,6 +18,7 @@ class PowerStateReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        const val ACTION_SET_POWER_STATE = "me.timschneeberger.rootlessjamesdsp.SET_POWER_STATE"
         const val EXTRA_ENABLED = "rootlessjamesdsp.enabled"
     }
 }

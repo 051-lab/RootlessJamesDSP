@@ -33,7 +33,7 @@ class EelListProperty(
 
     companion object : IPropertyCompanion {
         private fun matchVariable(key: String, contents: String): MatchResult? {
-            val regex = """$key\s*=\s*(-?\d+\.?\d*)\s*;""".toRegex()
+            val regex = """(?<!\w)${Regex.escape(key)}\s*=\s*([+-]?\d+)\s*;""".toRegex()
             return regex.find(contents)
         }
 
@@ -44,36 +44,39 @@ class EelListProperty(
 
         fun replaceVariable(key: String, replacement: String, contents: String): String? {
             val match = matchVariable(key, contents)
-            match ?: return null
-
-            return match.groups[1]?.range?.let {
-                contents.replaceRange(it, replacement)
-            }
+            return replaceOrInsertAssignment(key, replacement, contents, match)
         }
 
-        override val definitionRegex =
-            """(?<var>\w+):(?<def>-?\d+\.?\d*)?<(?<min>-?\d+\.?\d*),(?<max>-?\d+\.?\d*),?(?<step>-?\d+\.?\d*)?\{(?<opt>[^\}]*)\}>(?<desc>[\s\S][^\n]*)""".toRegex()
+        override val definitionRegex = Regex(
+            """^\s*(?://\s*)?(?<var>\w+)\s*:\s*(?<def>[+-]?\d+)?\s*<\s*(?<min>[+-]?\d+)\s*,\s*(?<max>[+-]?\d+)(?:\s*,\s*(?<step>[+-]?\d+))?\s*\{(?<opt>[^}]*)\}\s*>\s*(?<desc>.*)\s*$"""
+        )
 
-        @Suppress("UNUSED_VARIABLE")
         override fun parse(line: String, contents: String): EelBaseProperty? {
             val matchList = definitionRegex.find(line)
             val groupsList = matchList?.groups ?: return null
 
-            val key = groupsList[1]?.value
-            val def = groupsList[2]?.value
-            val min = groupsList[3]?.value
-            val max = groupsList[4]?.value
-            val step = groupsList[5]?.value ?: "1"
-            val opt = groupsList[6]?.value
-            val desc = groupsList[7]?.value?.trim()
+            val key = groupsList["var"]?.value
+            val def = groupsList["def"]?.value
+            val min = groupsList["min"]?.value
+            val max = groupsList["max"]?.value
+            val step = groupsList["step"]?.value ?: "1"
+            val opt = groupsList["opt"]?.value
+            val desc = groupsList["desc"]?.value?.trim()
 
             if (key == null || desc == null || min == null || max == null || opt == null) {
                 return null
             }
 
-            val current = findVariable(key, contents)
-            if (current == null) {
-                Timber.e("Failed to find current value of list option parameter (key=$key)")
+            val defaultValue = def?.toIntOrNull()
+            val current = findVariable(key, contents) ?: defaultValue
+            val minimum = min.toIntOrNull()
+            val maximum = max.toIntOrNull()
+            val stepValue = step.toIntOrNull()
+            val options = opt.split(',').map(String::trim)
+            if ((def != null && defaultValue == null) || current == null || minimum == null ||
+                maximum == null || stepValue == null || stepValue <= 0 || options.any { it.isEmpty() }
+            ) {
+                Timber.e("Invalid list option parameter (key=$key)")
                 return null
             }
 
@@ -81,14 +84,14 @@ class EelListProperty(
                 return EelListProperty(
                     key,
                     desc,
-                    def?.toInt(),
+                    defaultValue,
                     current,
-                    min.toInt(),
-                    max.toInt(),
-                    1,
-                    opt.split(',').map(String::trim)
+                    minimum,
+                    maximum,
+                    stepValue,
+                    options
                 ).also { Timber.d("Found list option property: $it") }
-            } catch (ex: NumberFormatException) {
+            } catch (ex: IllegalArgumentException) {
                 Timber.e("Failed to parse list option parameter (key=$key)")
                 Timber.e(ex)
             }

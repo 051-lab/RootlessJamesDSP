@@ -11,4 +11,18 @@
         android:icon="@drawable/ic_twotone_device_unknown_24dp"
         app:isStatic="true"
         app:iconSpaceReserved="false"/>
+    <Preference
+        android:key="@string/key_processing_status"
+        android:title="@string/processing_status"
+        android:summary="@string/processing_status_stopped"
+        android:icon="@drawable/ic_baseline_equalizer_24dp"
+        android:selectable="false"
+        app:iconSpaceReserved="false" />
+    <me.timschneeberger.rootlessjamesdsp.preference.MaterialSwitchPreference
+        android:key="@string/key_processing_bypass"
+        android:title="@string/processing_bypass"
+        android:summary="@string/processing_bypass_summary"
+        android:defaultValue="false"
+        android:persistent="false"
+        app:iconSpaceReserved="false" />
 </PreferenceScreen>

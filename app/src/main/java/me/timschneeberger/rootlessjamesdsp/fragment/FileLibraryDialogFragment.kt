@@ -24,6 +24,7 @@ import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.FileProvider
 import androidx.core.content.getSystemService
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.DialogPreference.TargetFragment
 import androidx.preference.ListPreferenceDialogFragmentCompat
 import androidx.preference.Preference
@@ -57,7 +58,8 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
     private var clickedEntryValue: CharSequence? = null
     private lateinit var dialog: AlertDialog
     private lateinit var importLauncher: ActivityResultLauncher<Intent>
-    private lateinit var binding: DialogFilelibraryBinding
+    private var _binding: DialogFilelibraryBinding? = null
+    private val binding get() = _binding!!
 
     private val eelParser = EelParser()
     private val scriptScannerScope = CoroutineScope(Dispatchers.IO)
@@ -139,7 +141,7 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
 
                             Timber.d("resample: Resampling ${selectedFile.name} to ${targetRate}Hz")
 
-                            CoroutineScope(Dispatchers.IO).launch {
+                            lifecycleScope.launch(Dispatchers.IO) {
                                 val newName = JdspImpResToolbox.OfflineAudioResample(
                                     (selectedFile.absoluteFile.parentFile?.absolutePath + "/"),
                                     selectedFile.name,
@@ -246,40 +248,32 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
             if (result.resultCode != Activity.RESULT_OK)
                 return@registerForActivityResult
 
-            result?.data?.data?.let { uri ->
-                val correctType = fileLibPreference.hasCorrectExtension(
-                    StorageUtils.queryName(
-                        requireContext(),
-                        uri
-                    ) ?: "INVALID"
-                )
-                if(!correctType)
-                {
-                    requireContext().showAlert(R.string.filelibrary_unsupported_format_title,
-                        R.string.filelibrary_unsupported_format)
-                    return@let
-                }
-
-                StorageUtils.openInputStreamSafe(requireContext(), uri)?.use {
-                    if(!fileLibPreference.hasValidContent(it)) {
-                        Timber.e("File rejected due to invalid content")
-                        requireContext().showAlert(R.string.filelibrary_corrupted_title,
-                            R.string.filelibrary_corrupted)
-                        return@let
+            result.data?.data?.let { uri ->
+                val appContext = requireContext().applicationContext
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val correctType = fileLibPreference.hasCorrectExtension(
+                        StorageUtils.queryName(appContext, uri) ?: "INVALID"
+                    )
+                    if (!correctType) {
+                        withContext(Dispatchers.Main) {
+                            requireContext().showAlert(R.string.filelibrary_unsupported_format_title,
+                                R.string.filelibrary_unsupported_format)
+                        }
+                        return@launch
                     }
-                }
 
-                val file = StorageUtils.importFile(requireContext(),
-                    fileLibPreference.directory?.absolutePath ?: "", uri)
-                if(file == null)
-                {
-                    Timber.e("Failed to import file")
-                    return@let
-                }
-
-                CoroutineScope(Dispatchers.Main).launch {
-                    delay(150L)
-                    refresh()
+                    val file = StorageUtils.importFile(appContext,
+                        fileLibPreference.directory?.absolutePath ?: "", uri,
+                        fileLibPreference::hasValidContent)
+                    withContext(Dispatchers.Main) {
+                        if (file == null) {
+                            Timber.e("Failed to import file")
+                            requireContext().showAlert(R.string.filelibrary_corrupted_title,
+                                R.string.filelibrary_corrupted)
+                        } else {
+                            refresh()
+                        }
+                    }
                 }
             }
         }
@@ -297,6 +291,12 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
                 fileLibPreference.value = value
             }
         }
+    }
+
+    override fun onDestroy() {
+        scriptScannerScope.cancel()
+        _binding = null
+        super.onDestroy()
     }
 
     private fun showFileNamePrompt(
@@ -362,8 +362,6 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
             return
 
         scriptScannerScope.launch {
-            binding.tags.removeAllViews()
-
             val untaggedScripts = mutableListOf<String>()
             val foundTags = mutableMapOf<String /* tag */, MutableList<String> /* scripts */>()
 
@@ -396,6 +394,7 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
                 foundTags["Untagged"] = ((foundTags["Untagged"] ?: listOf()) + untaggedScripts).toMutableList()
 
             withContext(Dispatchers.Main) {
+                binding.tags.removeAllViews()
                 val sorted = foundTags.entries
                     .sortedWith(compareByDescending<Map.Entry<String, List<String>>> { it.value.size }
                         .thenBy { it.key })
@@ -435,7 +434,7 @@ class FileLibraryDialogFragment : ListPreferenceDialogFragmentCompat(), TargetFr
 
     override fun onPrepareDialogBuilder(builder: AlertDialog.Builder) {
         super.onPrepareDialogBuilder(builder)
-        binding = DialogFilelibraryBinding.inflate(layoutInflater)
+        _binding = DialogFilelibraryBinding.inflate(layoutInflater)
         binding.tags.isSingleSelection = true
         binding.tags.layoutTransition = LayoutTransition().apply {
             enableTransitionType(LayoutTransition.CHANGING)

@@ -180,6 +180,17 @@
     <string name="reverb_preset_long_reverb2">Long reverb 2</string>
 
     <string name="convolver_enable">Convolver</string>
+    <string name="darwin_enable">Darwin FIR</string>
+    <string name="darwin_summary">Native-rate software FIR emulation; not HiBy Darwin hardware processing</string>
+    <string name="darwin_package">Filter package</string>
+    <string name="darwin_filter">Filter</string>
+    <string name="darwin_harmonic">Harmonic enhancement</string>
+    <string name="darwin_auto_headroom">Automatic headroom</string>
+    <string name="darwin_auto_headroom_summary">Reserves at least 1 dB below the filter package peak</string>
+    <string name="darwin_no_package">No filter package selected</string>
+    <string name="darwin_no_filters">No valid filters found</string>
+    <string name="message_darwin_corrupt">Darwin FIR: Invalid filter package.</string>
+    <string name="message_darwin_missing">Darwin FIR: Filter package is missing.</string>
     <string name="convolver_impulse">Impulse response</string>
     <string name="convolver_advanced_editing">Advanced waveform editing</string>
     <string name="convolver_convolution_mode">Impulse response optimization</string>
@@ -682,6 +693,17 @@
     <string name="group_usb">USB</string>
     <string name="group_unknown">Unknown</string>
     <string name="device_profile_status">Active device profile</string>
+    <string name="processing_status">Active processing</string>
+    <string name="processing_status_none">No effects enabled</string>
+    <string name="processing_status_stopped">Processor stopped</string>
+    <string name="processing_status_bypassed">Processing bypassed</string>
+    <string name="processing_bypass">A/B bypass</string>
+    <string name="processing_bypass_summary">Compare with the unprocessed signal without stopping capture</string>
+    <string name="processing_status_runtime">%1$d kHz · DSP %2$.0f%% · %3$s</string>
+    <string name="processing_status_stable">Stable</string>
+    <string name="processing_status_underruns">%1$d underruns</string>
+    <string name="processing_status_limiter">Limiter reduction %1$.1f dB</string>
+    <string name="processing_status_headroom">Darwin headroom %1$.1f dB</string>
     <string name="device_profile_manage_copy">Copy profile…</string>
     <string name="device_profile_manage_delete">Delete profiles…</string>
     <string name="device_profile_manage_copy_select_no_target">No profiles to overwrite available</string>

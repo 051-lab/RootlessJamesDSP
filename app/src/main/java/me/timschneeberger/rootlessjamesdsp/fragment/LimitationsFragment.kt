@@ -11,8 +11,6 @@ import me.timschneeberger.rootlessjamesdsp.databinding.OnboardingPage2Binding
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.dpToPx
 
 class LimitationsFragment : Fragment() {
-    private lateinit var binding: OnboardingPage2Binding
-
     override fun onCreate(savedInstanceState: Bundle?) {
         enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
         returnTransition = MaterialSharedAxis(MaterialSharedAxis.X, false)
@@ -25,7 +23,7 @@ class LimitationsFragment : Fragment() {
         bundle: Bundle?
     ): View {
         val padding = 16.dpToPx
-        binding = OnboardingPage2Binding.inflate(layoutInflater, viewGroup, false)
+        val binding = OnboardingPage2Binding.inflate(layoutInflater, viewGroup, false)
         binding.root.setPadding(padding, 0, padding, padding)
         binding.header.isVisible = false
         binding.notice.isVisible = false

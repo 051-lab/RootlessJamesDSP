@@ -216,14 +216,14 @@
 
         <!-- Services -->
         <service
-            android:name=".service.RootlessAudioProcessorService"
+            android:name="me.timschneeberger.rootlessjamesdsp.service.RootlessAudioProcessorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
         <!-- Root only: FGS service permission is granted in root/AndroidManifest.xml -->
         <service
-            android:name=".service.RootAudioProcessorService"
+            android:name="me.timschneeberger.rootlessjamesdsp.service.RootAudioProcessorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
@@ -261,7 +261,7 @@
         </service>
 
         <service
-            android:name=".backup.BackupRestoreService"
+            android:name="me.timschneeberger.rootlessjamesdsp.backup.BackupRestoreService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 

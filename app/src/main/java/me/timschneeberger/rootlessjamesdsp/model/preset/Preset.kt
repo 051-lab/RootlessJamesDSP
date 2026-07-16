@@ -118,7 +118,9 @@ class Preset(val name: String, externalPath: File? = null): KoinComponent {
         const val META_MIN_VERSION_CODE = "min_version_code" /* version 3+ */
 
         private fun currentPath(ctx: Context) = File(ctx.applicationInfo.dataDir + "/shared_prefs")
-        private fun isKnownEntry(n: String) = (n.startsWith("dsp_") && n.endsWith("xml")) || n == FILE_LIVEPROG
+        private fun isKnownEntry(n: String) =
+            ('/' !in n && '\\' !in n && n.startsWith("dsp_") && n.endsWith(".xml")) ||
+                n == FILE_LIVEPROG
 
         fun validate(inputStream: InputStream) = Tar.Reader(inputStream, ::isKnownEntry).validate()
 

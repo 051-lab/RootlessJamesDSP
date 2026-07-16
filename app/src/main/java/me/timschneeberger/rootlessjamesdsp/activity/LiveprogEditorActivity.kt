@@ -156,21 +156,20 @@ class LiveprogEditorActivity : BaseActivity() {
 
                     // Calculate actual line number
                     val initLine = parser.findAnnotationLine("@init")
+                    val sliderLine = parser.findAnnotationLine("@slider")
+                    val blockLine = parser.findAnnotationLine("@block")
                     val sampleLine = parser.findAnnotationLine("@sample")
-                    if (ret == -1) // error in @init
-                    {
-                        if (relativeLine >= 0 && initLine >= 0)
-                            relativeLine += initLine
-                        else
-                            relativeLine = -1
+                    val sectionLine = when (ret) {
+                        -1 -> initLine
+                        -3 -> sampleLine
+                        -4 -> sliderLine
+                        -5 -> blockLine
+                        else -> -1
                     }
-                    else if (ret == -3) // error in @sample
-                    {
-                        if (relativeLine >= 0 && sampleLine >= 0)
-                            relativeLine += sampleLine
-                        else
-                            relativeLine = -1
-                    }
+                    relativeLine = if (relativeLine >= 0 && sectionLine >= 0)
+                        relativeLine + sectionLine
+                    else
+                        -1
 
                     if(msgDetail?.isNotBlank() == true) {
                         msg += if(relativeLine >= 0)

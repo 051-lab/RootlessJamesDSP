@@ -15,7 +15,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.os.PersistableBundle
 import android.view.HapticFeedbackConstants
 import android.widget.CheckBox
 import android.widget.LinearLayout
@@ -25,12 +24,12 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.getSystemService
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.DialogPreference.TargetFragment
 import androidx.preference.Preference
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.snackbar.Snackbar
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -47,6 +46,7 @@ import me.timschneeberger.rootlessjamesdsp.fragment.FileLibraryDialogFragment
 import me.timschneeberger.rootlessjamesdsp.fragment.LibraryLoadErrorFragment
 import me.timschneeberger.rootlessjamesdsp.interop.JamesDspRemoteEngine
 import me.timschneeberger.rootlessjamesdsp.interop.JamesDspWrapper
+import me.timschneeberger.rootlessjamesdsp.interop.PreferenceCache
 import me.timschneeberger.rootlessjamesdsp.model.ProcessorMessage
 import me.timschneeberger.rootlessjamesdsp.model.preset.Preset
 import me.timschneeberger.rootlessjamesdsp.preference.FileLibraryPreference
@@ -81,8 +81,6 @@ import me.timschneeberger.rootlessjamesdsp.view.FloatingToggleButton
 import org.koin.core.component.inject
 import timber.log.Timber
 import java.io.File
-import java.util.Timer
-import kotlin.concurrent.schedule
 
 
 class MainActivity : BaseActivity() {
@@ -109,7 +107,6 @@ class MainActivity : BaseActivity() {
                 Timber.d("Service connected")
 
                 processorService = (service as BaseAudioProcessorService.LocalBinder).service
-                processorServiceBound = true
 
                 if (isRootless())
                     binding.powerToggle.isToggled = true
@@ -119,7 +116,6 @@ class MainActivity : BaseActivity() {
                 Timber.d("Service disconnected")
 
                 processorService = null
-                processorServiceBound = false
             }
         }
     }
@@ -149,6 +145,18 @@ class MainActivity : BaseActivity() {
 
         val firstBoot = prefsVar.get<Boolean>(R.string.key_first_boot)
         assets.installPrivateAssets(this, force = firstBoot)
+        val darwinPreferences = PreferenceCache.getPreferences(this, Constants.PREF_DARWIN)
+        if (File(getExternalFilesDir(null), BUNDLED_DARWIN_PATH).isFile &&
+            !darwinPreferences.contains(getString(R.string.key_darwin_file))) {
+            darwinPreferences.edit()
+                .putBoolean(getString(R.string.key_darwin_enable), true)
+                .putString(getString(R.string.key_darwin_file), BUNDLED_DARWIN_PATH)
+                .putString(getString(R.string.key_darwin_filter), BUNDLED_DARWIN_FILTER)
+                .apply()
+            PreferenceCache.getPreferences(this, Constants.PREF_CONVOLVER).edit()
+                .putBoolean(getString(R.string.key_convolver_enable), false)
+                .apply()
+        }
 
         mediaProjectionManager = getSystemService<MediaProjectionManager>()!!
         binding = ActivityDspMainBinding.inflate(layoutInflater)
@@ -406,10 +414,9 @@ class MainActivity : BaseActivity() {
         super.onSharedPreferenceChanged(sharedPreferences, key)
     }
 
-    override fun onSaveInstanceState(outState: Bundle, outPersistentState: PersistableBundle) {
-        super.onSaveInstanceState(outState, outPersistentState.apply {
-            putBoolean(STATE_LOAD_FAILED, hasLoadFailed)
-        })
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_LOAD_FAILED, hasLoadFailed)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onStart() {
@@ -430,15 +437,7 @@ class MainActivity : BaseActivity() {
     override fun onDestroy() {
         unregisterLocalReceiver(broadcastReceiver)
         unregisterLocalReceiver(processorMessageReceiver)
-
-        try {
-            if (processorService != null && processorServiceBound)
-                unbindService(processorServiceConnection)
-        }
-        catch (_: Exception) {}
-
-        processorService = null
-        processorServiceBound = false
+        unbindProcessorService()
 
         prefsVar.set(R.string.key_is_activity_active, false)
         super.onDestroy()
@@ -507,7 +506,7 @@ class MainActivity : BaseActivity() {
             return
         }
 
-        CoroutineScope(Dispatchers.Default).launch {
+        lifecycleScope.launch(Dispatchers.Default) {
             updateManager.isUpdateAvailable().collect {
                 when(it) {
                     is Result.Error -> {
@@ -587,10 +586,13 @@ class MainActivity : BaseActivity() {
     }
 
     private fun bindProcessorService() {
+        if (processorServiceBound)
+            return
         if (isRootless()) {
             sdkAbove(Build.VERSION_CODES.Q) {
                 Intent(this, RootlessAudioProcessorService::class.java).also { intent ->
                     val ret = bindService(intent, processorServiceConnection, 0)
+                    processorServiceBound = ret
                     // Service not active
                     if (!ret)
                         requestCapturePermission()
@@ -599,18 +601,25 @@ class MainActivity : BaseActivity() {
         }
         else if (isRoot()) {
             Intent(this, RootAudioProcessorService::class.java).also { intent ->
-                bindService(intent, processorServiceConnection, 0)
+                processorServiceBound = bindService(intent, processorServiceConnection, 0)
             }
         }
     }
 
     private fun unbindProcessorService() {
+        if (!processorServiceBound) {
+            processorService = null
+            return
+        }
         try {
             unbindService(processorServiceConnection)
         }
         catch (ex: IllegalArgumentException) {
             Timber.d("Failed to unbind service connection. Not registered?")
             Timber.i(ex)
+        } finally {
+            processorService = null
+            processorServiceBound = false
         }
     }
 
@@ -643,6 +652,8 @@ class MainActivity : BaseActivity() {
                     )) {
                         ProcessorMessage.ConvolverErrorCode.Corrupted -> R.string.message_irs_corrupt
                         ProcessorMessage.ConvolverErrorCode.AdvParamsInvalid -> R.string.message_convolver_advimp_invalid
+                        ProcessorMessage.ConvolverErrorCode.DarwinCorrupted -> R.string.message_darwin_corrupt
+                        ProcessorMessage.ConvolverErrorCode.DarwinMissing -> R.string.message_darwin_missing
                         else -> null
                     }?.let {
                         makeSnackbar(getString(it)).show()
@@ -682,16 +693,6 @@ class MainActivity : BaseActivity() {
         var keyEnable: Int? = null
         when {
             name.endsWith(".tar") -> {
-                // Validate presets
-                StorageUtils.openInputStreamSafe(this, uri)?.use {
-                    if (!Preset.validate(it)) {
-                        Timber.e("File rejected due to invalid content")
-                        showAlert(R.string.filelibrary_corrupted_title,
-                            R.string.filelibrary_corrupted)
-                        return
-                    }
-                }
-
                 titleRes = R.string.intent_import_preset
                 subDir = "Presets"
             }
@@ -724,47 +725,55 @@ class MainActivity : BaseActivity() {
             if (idx < 0 || idx > 1)
                 return@showSingleChoiceAlert
 
-            val file = StorageUtils.importFile(
-                this,
-                File(getExternalFilesDir(null), subDir).absolutePath,
-                uri
-            )
+            lifecycleScope.launch(Dispatchers.IO) {
+                val isPreset = name.endsWith(".tar")
+                val file = StorageUtils.importFile(
+                    this@MainActivity,
+                    File(getExternalFilesDir(null), subDir).absolutePath,
+                    uri,
+                    if (isPreset) ({ Preset.validate(it) }) else null
+                )
 
-            if (file == null) {
-                Timber.w("Failed to import file '$uri'")
-                makeSnackbar(getString(R.string.intent_import_fail, name)).show()
-                return@showSingleChoiceAlert
-            }
-
-            when (idx) {
-                0 -> makeSnackbar(getString(R.string.intent_import_success, name)).show()
-                1 -> {
-                    CoroutineScope(Dispatchers.Default).launch {
-                        delay(250L)
-
-                        if (name.endsWith(".tar")) {
-                            try {
-                                StorageUtils.openInputStreamSafe(this@MainActivity, uri)?.use {
-                                    Preset.load(this@MainActivity, it)
-                                }
-                            }
-                            catch (ex: Exception) {
-                                showAlert(getString(R.string.filelibrary_corrupted_title), ex.localizedMessage ?: "")
-                            }
-                        }
-                        else if (namespace != null && key != null && keyEnable != null)
-                            @Suppress("DEPRECATION")
-                            getSharedPreferences(namespace, MODE_MULTI_PROCESS)
-                                .edit()
-                                .putBoolean(getString(keyEnable), true)
-                                .putString(getString(key), file.absolutePath)
-                                .apply()
-
-                        delay(250L)
-                        broadcastPresetLoadEvent()
-
-                        makeSnackbar(getString(R.string.intent_import_select_success, name)).show()
+                if (file == null) {
+                    Timber.w("Failed to import file '$uri'")
+                    withContext(Dispatchers.Main) {
+                        makeSnackbar(getString(R.string.intent_import_fail, name)).show()
                     }
+                    return@launch
+                }
+
+                if (idx == 0) {
+                    withContext(Dispatchers.Main) {
+                        makeSnackbar(getString(R.string.intent_import_success, name)).show()
+                    }
+                    return@launch
+                }
+
+                val error = if (isPreset) {
+                    try {
+                        file.inputStream().use { Preset.load(this@MainActivity, it) }
+                        null
+                    } catch (ex: Exception) {
+                        ex.localizedMessage.orEmpty()
+                    }
+                } else {
+                    if (namespace != null && key != null && keyEnable != null) {
+                        @Suppress("DEPRECATION")
+                        getSharedPreferences(namespace, MODE_MULTI_PROCESS)
+                            .edit()
+                            .putBoolean(getString(keyEnable), true)
+                            .putString(getString(key), file.absolutePath)
+                            .apply()
+                        broadcastPresetLoadEvent()
+                    }
+                    null
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (error != null)
+                        showAlert(getString(R.string.filelibrary_corrupted_title), error)
+                    else
+                        makeSnackbar(getString(R.string.intent_import_select_success, name)).show()
                 }
             }
         }
@@ -776,8 +785,9 @@ class MainActivity : BaseActivity() {
 
     private fun quitGracefully() {
         CrashlyticsImpl.sendUnsentReports()
-        Timer().schedule(2000){
-            this@MainActivity.finishAndRemoveTask()
+        lifecycleScope.launch {
+            delay(2000)
+            finishAndRemoveTask()
         }
     }
 
@@ -802,6 +812,8 @@ class MainActivity : BaseActivity() {
     private var presetDialogHost: FakePresetFragment? = null
 
     companion object {
+        private const val BUNDLED_DARWIN_PATH = "Darwin/Darwin_v2_forward.zip"
+        private const val BUNDLED_DARWIN_FILTER = "Def1_MP_fast_normal.flt"
         const val EXTRA_FORCE_SHOW_CAPTURE_PROMPT = "ForceShowCapturePrompt"
 
         private val DEBUG_IGNORE_MISSING_LIBRARY = BuildConfig.DEBUG

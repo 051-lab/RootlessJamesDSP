@@ -25,9 +25,12 @@ object JamesDspWrapper {
 
     // Engine config
     external fun setSamplingRate(self: JamesDspHandle, sampleRate: Float, forceRefresh: Boolean)
+    external fun setBlockSize(self: JamesDspHandle, frames: Int): Boolean
 
     // Effect config
     external fun setLimiter(self: JamesDspHandle, threshold: Float, release: Float): Boolean
+    external fun setLimiterEnabled(self: JamesDspHandle, enabled: Boolean): Boolean
+    external fun getLimiterGainReduction(self: JamesDspHandle): Float
     external fun setPostGain(self: JamesDspHandle, postGain: Float): Boolean
     external fun setMultiEqualizer(self: JamesDspHandle, enable: Boolean, filterType: Int, interpolationMode: Int, bands: DoubleArray): Boolean
     external fun setVdc(self: JamesDspHandle, enable: Boolean, vdcContents: String): Boolean
@@ -39,6 +42,7 @@ object JamesDspWrapper {
     external fun setBassBoost(self: JamesDspHandle, enable: Boolean, maxGain: Float): Boolean
     external fun setStereoEnhancement(self: JamesDspHandle, enable: Boolean, level: Float): Boolean
     external fun setVacuumTube(self: JamesDspHandle, enable: Boolean, level: Float): Boolean
+    external fun setVacuumTubeHarmonicGain(self: JamesDspHandle, amount: Float): Boolean
     external fun setLiveprog(self: JamesDspHandle, enable: Boolean, id: String, liveprogContent: String): Boolean
 
     // EEL VM utilities

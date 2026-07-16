@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Resources
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -26,6 +27,7 @@ class RoutingObserver(val context: Context) : MediaRouter.Callback(), KoinCompon
 
     private val callbacks = mutableListOf<RoutingChangedCallback>()
     private val router by lazy { MediaRouter.getInstance(context) }
+    private val audioManager by lazy { context.getSystemService<AudioManager>()!! }
     private val prefs: Preferences.App by inject()
 
     var currentDevice by Delegates.observable<Device?>(null) { _, old, new ->
@@ -37,25 +39,32 @@ class RoutingObserver(val context: Context) : MediaRouter.Callback(), KoinCompon
         get() = DeviceGroup.from(type)
 
     private fun MediaRouter.RouteInfo.findOutputDevice(): Device? {
-        return context.getSystemService<AudioManager>()!!
-            .getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            .filter(AudioDeviceInfo::isSink)
-            .find { info ->
-                info.deviceGroup.let {
-                    when {
-                        isDeviceSpeaker -> it == DeviceGroup.SPEAKER
-                        isBluetooth -> it == DeviceGroup.BLUETOOTH
-                        isUsb -> it == DeviceGroup.USB
-                        isHeadphone -> it == DeviceGroup.ANALOG
-                        isHdmi -> it == DeviceGroup.HDMI
-                        else -> it == DeviceGroup.OTHER
-                    }
-                }
-            }?.let { device ->
+        val expectedGroup = when {
+            isDeviceSpeaker -> DeviceGroup.SPEAKER
+            isBluetooth -> DeviceGroup.BLUETOOTH
+            isUsb -> DeviceGroup.USB
+            isHeadphone -> DeviceGroup.ANALOG
+            isHdmi -> DeviceGroup.HDMI
+            else -> DeviceGroup.OTHER
+        }
+        val activeDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            audioManager.getAudioDevicesForAttributes(
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build()
+            ).firstOrNull { it.isSink && it.deviceGroup == expectedGroup }
+        } else null
+        val connectedDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .filter { it.isSink && it.deviceGroup == expectedGroup }
+        val routeName = name.toString()
+        val device = activeDevice ?: connectedDevices.firstOrNull {
+            it.productName.toString().equals(routeName, true) ||
+                routeName.contains(it.productName.toString(), true)
+        } ?: connectedDevices.firstOrNull()
+
+        return device?.let {
                 Device(
-                    device.productName.toString(),
-                    device.address,
-                    device.deviceGroup
+                    it.productName.toString(),
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.address else it.productName.toString(),
+                    it.deviceGroup
                 )
             }
     }
@@ -149,6 +158,7 @@ class RoutingObserver(val context: Context) : MediaRouter.Callback(), KoinCompon
                 this,
                 0
             )
+            currentDevice = router.selectedRoute.findOutputDevice()
         }
         callbacks.add(callback)
         currentDevice?.let(callback::onRoutingDeviceChanged)

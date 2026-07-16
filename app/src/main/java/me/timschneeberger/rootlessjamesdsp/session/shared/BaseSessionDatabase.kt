@@ -9,10 +9,12 @@ import timber.log.Timber
 
 abstract class BaseSessionDatabase(protected val context: Context) {
 
-    val sessionList = hashMapOf<Int, IEffectSession>()
+    private val sessions = hashMapOf<Int, IEffectSession>()
+    val sessionList: HashMap<Int, IEffectSession>
+        @Synchronized get() = HashMap(sessions)
     private var isDisposing = false
     private val changeCallbacks = mutableListOf<OnSessionChangeListener>()
-    private var excludedUids = arrayOf<Int>()
+    private var excludedUids = emptySet<Int>()
 
     protected open val excludedPackages = arrayOf(
         context.packageName
@@ -22,29 +24,29 @@ abstract class BaseSessionDatabase(protected val context: Context) {
     protected abstract fun createSession(id: Int, uid: Int, packageName: String): IEffectSession?
     protected abstract fun onSessionRemoved(item: IEffectSession)
 
-    fun destroy()
+    @Synchronized fun destroy()
     {
         isDisposing = true
         clearSessions()
     }
 
-    fun clearSessions(){
-        sessionList.forEach { (_, session) -> onSessionRemoved(session) }
-        sessionList.clear()
+    @Synchronized fun clearSessions(){
+        sessions.forEach { (_, session) -> onSessionRemoved(session) }
+        sessions.clear()
     }
 
-    fun update(dump: ISessionInfoDump)
+    @Synchronized fun update(dump: ISessionInfoDump)
     {
         if(isDisposing) {
             Timber.d("update: SessionDatabase is disposing; ignoring dump")
             return
         }
 
-        val removedSessions = sessionList.filter {
+        val removedSessions = sessions.filter {
             !dump.sessions.contains(it.key)
         }
         val addedSessions = dump.sessions.filter {
-            !sessionList.contains(it.key) && !excludedUids.contains(it.value.uid)
+            !sessions.contains(it.key) && !excludedUids.contains(it.value.uid)
         }
 
         addedSessions.forEach next@ {
@@ -68,7 +70,7 @@ abstract class BaseSessionDatabase(protected val context: Context) {
         removedSessions.forEach { removeSession(it.key) }
     }
 
-    fun addSession(sid: Int, uid: Int, packageName: String, replace: Boolean = false){
+    @Synchronized fun addSession(sid: Int, uid: Int, packageName: String, replace: Boolean = false){
         if(!shouldAddSession(sid, uid, packageName)) {
             return
         }
@@ -80,49 +82,53 @@ abstract class BaseSessionDatabase(protected val context: Context) {
 
         if(replace) {
             // Remove old sessions from package
-            sessionList
+            sessions
                 .filter { it.value.packageName == packageName }
                 .keys
                 .forEach(::removeSession)
-            changeCallbacks.forEach { it.onSessionChanged(sessionList) }
+            notifyChanged()
         }
 
         Timber.d("Found new session: sid=$sid; $packageName")
-        sessionList[sid] = createSession(sid, uid, packageName) ?: return
+        sessions[sid] = createSession(sid, uid, packageName) ?: return
         Timber.d("Successfully added session $sid")
 
-        changeCallbacks.forEach { it.onSessionChanged(sessionList) }
+        notifyChanged()
     }
 
-    fun removeSession(sid: Int) {
-        sessionList[sid]?.let { it ->
+    @Synchronized fun removeSession(sid: Int) {
+        sessions[sid]?.let { it ->
             Timber.d("Removed session: session ${sid}; data: $it")
             onSessionRemoved(it)
-            sessionList.remove(sid)
-            changeCallbacks.forEach { it.onSessionChanged(sessionList) }
+            sessions.remove(sid)
+            notifyChanged()
         }
     }
 
-    fun setExcludedUids(uids: Array<Int>) {
-        excludedUids = uids
+    @Synchronized fun setExcludedUids(uids: Array<Int>) {
+        excludedUids = uids.toSet()
 
-        val excludedSessions = sessionList.filter {
+        val excludedSessions = sessions.filter {
             excludedUids.contains(it.value.uid)
         }
         val notify = excludedSessions.isNotEmpty()
         excludedSessions.forEach { (_, session) -> onSessionRemoved(session) }
-        excludedSessions.map { it.key }.forEach { sid -> sessionList.remove(sid) }
+        excludedSessions.map { it.key }.forEach { sid -> sessions.remove(sid) }
         if(notify)
-            changeCallbacks.forEach { it.onSessionChanged(sessionList) }
+            notifyChanged()
     }
 
-    fun registerOnSessionChangeListener(changeListener: OnSessionChangeListener) {
+    @Synchronized fun registerOnSessionChangeListener(changeListener: OnSessionChangeListener) {
         changeCallbacks.add(changeListener)
-        changeListener.onSessionChanged(sessionList)
+        changeListener.onSessionChanged(HashMap(sessions))
     }
 
-    fun unregisterOnSessionChangeListener(changeListener: OnSessionChangeListener) {
+    @Synchronized fun unregisterOnSessionChangeListener(changeListener: OnSessionChangeListener) {
         changeCallbacks.remove(changeListener)
+    }
+
+    private fun notifyChanged() {
+        changeCallbacks.toList().forEach { it.onSessionChanged(HashMap(sessions)) }
     }
 
     interface OnSessionChangeListener {

@@ -3,13 +3,17 @@ package me.timschneeberger.rootlessjamesdsp.interop
 import android.content.Context
 import android.content.Intent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.dsp.DarwinFilterPackage
+import me.timschneeberger.rootlessjamesdsp.dsp.DarwinOversampling
 import me.timschneeberger.rootlessjamesdsp.interop.structure.EelVmVariable
+import me.timschneeberger.rootlessjamesdsp.liveprog.EelParser
 import me.timschneeberger.rootlessjamesdsp.model.ParametricEqBandList
 import me.timschneeberger.rootlessjamesdsp.model.ProcessorMessage
 import me.timschneeberger.rootlessjamesdsp.preference.FileLibraryPreference
@@ -21,12 +25,20 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileReader
 
-abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspWrapper.JamesDspCallbacks? = null) : AutoCloseable {
+abstract class JamesDspBaseEngine(
+    val context: Context,
+    val callbacks: JamesDspWrapper.JamesDspCallbacks? = null,
+    private val reportSampleRate: Boolean = true,
+) : AutoCloseable {
     abstract var enabled: Boolean
+    var externalDarwinProcessing = false
+    var externalDarwinConvolver = false
+    var externalDarwinHarmonics = false
     open var sampleRate: Float = 0.0f
         set(value) {
             field = value
-            reportSampleRate(value)
+            if (reportSampleRate)
+                reportSampleRate(value)
         }
 
     private val syncScope = CoroutineScope(Dispatchers.IO)
@@ -35,13 +47,20 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
     override fun close() {
         Timber.d("Closing engine")
-        reportSampleRate(0f)
+        if (reportSampleRate)
+            reportSampleRate(0f)
         syncScope.cancel()
     }
 
     open fun syncWithPreferences(forceUpdateNamespaces: Array<String>? = null) {
         syncScope.launch {
-            syncWithPreferencesAsync(forceUpdateNamespaces)
+            try {
+                syncWithPreferencesAsync(forceUpdateNamespaces)
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                Timber.e(ex, "Preference synchronization failed")
+            }
         }
     }
 
@@ -67,8 +86,9 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
             cache.select(Constants.PREF_COMPANDER)
             val compEnabled = cache.get(R.string.key_compander_enable, false)
             val compTimeConst = cache.get(R.string.key_compander_timeconstant, 0.22f)
-            val compGranularity = cache.get(R.string.key_compander_granularity, 2f).toInt()
-            val compTfTransforms = cache.get(R.string.key_compander_tftransforms, "0").toInt()
+            val compGranularity = cache.get(R.string.key_compander_granularity, 0f)
+                .takeIf(Float::isFinite)?.toInt()?.coerceIn(0, 4) ?: 0
+            val compTfTransforms = cache.get(R.string.key_compander_tftransforms, "0").toIntOrNull()?.coerceIn(0, 3) ?: 0
             val compResponse = cache.get(R.string.key_compander_response, "95.0;200.0;400.0;800.0;1600.0;3400.0;7500.0;0;0;0;0;0;0;0")
 
             cache.select(Constants.PREF_BASS)
@@ -77,8 +97,8 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
             cache.select(Constants.PREF_EQ)
             val eqEnabled = cache.get(R.string.key_eq_enable, false)
-            val eqFilterType = cache.get(R.string.key_eq_filter_type, "0").toInt()
-            val eqInterpolationMode = cache.get(R.string.key_eq_interpolation, "0").toInt()
+            val eqFilterType = cache.get(R.string.key_eq_filter_type, "0").toIntOrNull()?.coerceIn(0, 5) ?: 0
+            val eqInterpolationMode = cache.get(R.string.key_eq_interpolation, "0").toIntOrNull()?.coerceIn(0, 1) ?: 0
             val eqBands = cache.get(R.string.key_eq_bands, Constants.DEFAULT_EQ)
 
             cache.select(Constants.PREF_GEQ)
@@ -92,7 +112,7 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
             cache.select(Constants.PREF_REVERB)
             val reverbEnabled = cache.get(R.string.key_reverb_enable, false)
-            val reverbPreset = cache.get(R.string.key_reverb_preset, "0").toInt()
+            val reverbPreset = cache.get(R.string.key_reverb_preset, "0").toIntOrNull()?.coerceIn(0, 18) ?: 0
 
             cache.select(Constants.PREF_STEREOWIDE)
             val swEnabled = cache.get(R.string.key_stereowide_enable, false)
@@ -100,7 +120,7 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
             cache.select(Constants.PREF_CROSSFEED)
             val crossfeedEnabled = cache.get(R.string.key_crossfeed_enable, false)
-            val crossfeedMode = cache.get(R.string.key_crossfeed_mode, "0").toInt()
+            val crossfeedMode = cache.get(R.string.key_crossfeed_mode, "0").toIntOrNull()?.coerceIn(0, 5) ?: 0
 
             cache.select(Constants.PREF_TUBE)
             val tubeEnabled = cache.get(R.string.key_tube_enable, false)
@@ -118,14 +138,26 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
             val convolverEnabled = cache.get(R.string.key_convolver_enable, false)
             val convolverFile = cache.get(R.string.key_convolver_file, "")
             val convolverAdvImp = cache.get(R.string.key_convolver_adv_imp, Constants.DEFAULT_CONVOLVER_ADVIMP)
-            val convolverMode = cache.get(R.string.key_convolver_mode, "0").toInt()
+            val convolverMode = cache.get(R.string.key_convolver_mode, "0").toIntOrNull()?.coerceIn(0, 2) ?: 0
+
+            cache.select(Constants.PREF_DARWIN)
+            val darwinEnabled = cache.get(R.string.key_darwin_enable, false)
+            val darwinFile = cache.get(R.string.key_darwin_file, "")
+            val darwinFilter = cache.get(R.string.key_darwin_filter, "")
+            val darwinAutoHeadroom = cache.get(R.string.key_darwin_auto_headroom, true)
 
             val targets = cache.changedNamespaces.toTypedArray() + (forceUpdateNamespaces ?: arrayOf())
-            targets.forEach {
+            targets.map {
+                if (it == Constants.PREF_CONVOLVER || it == Constants.PREF_DARWIN) SHARED_CONVOLVER else it
+            }.distinct().forEach {
                 Timber.i("Committing new changes in namespace '$it'")
 
                 val result = when (it) {
-                    Constants.PREF_OUTPUT -> setOutputControl(limiterThreshold, limiterRelease, outputPostGain)
+                    Constants.PREF_OUTPUT -> setOutputControl(
+                        limiterThreshold,
+                        limiterRelease,
+                        if (externalDarwinProcessing) 0f else outputPostGain
+                    ) and setOutputLimiterEnabled(!externalDarwinProcessing)
                     Constants.PREF_COMPANDER -> setCompander(compEnabled, compTimeConst, compGranularity, compTfTransforms, compResponse)
                     Constants.PREF_BASS -> setBassBoost(bassEnabled, bassMaxGain)
                     Constants.PREF_EQ -> setMultiEqualizer(eqEnabled, eqFilterType, eqInterpolationMode, eqBands)
@@ -134,10 +166,15 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
                     Constants.PREF_REVERB -> setReverb(reverbEnabled, reverbPreset)
                     Constants.PREF_STEREOWIDE -> setStereoEnhancement(swEnabled, swMode)
                     Constants.PREF_CROSSFEED -> setCrossfeed(crossfeedEnabled, crossfeedMode)
-                    Constants.PREF_TUBE -> setVacuumTube(tubeEnabled, tubeDrive)
+                    Constants.PREF_TUBE -> setVacuumTube(tubeEnabled && !externalDarwinHarmonics, tubeDrive)
                     Constants.PREF_DDC -> setVdc(ddcEnabled, ddcFile)
                     Constants.PREF_LIVEPROG -> setLiveprog(liveProgEnabled, liveprogFile)
-                    Constants.PREF_CONVOLVER -> setConvolver(convolverEnabled, convolverFile, convolverMode, convolverAdvImp)
+                    SHARED_CONVOLVER -> if (darwinEnabled && !externalDarwinConvolver)
+                        setDarwinFilter(darwinFile, darwinFilter, darwinAutoHeadroom)
+                    else if (darwinEnabled)
+                        setConvolverInternal(false, FloatArray(0), 0, 0, 0)
+                    else
+                        setConvolver(convolverEnabled, convolverFile, convolverMode, convolverAdvImp)
                     else -> true
                 }
 
@@ -153,12 +190,16 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
     fun setMultiEqualizer(enable: Boolean, filterType: Int, interpolationMode: Int, bands: String): Boolean
     {
-        val doubleArray = DoubleArray(30)
         val array = bands.split(";")
+        if (array.size != 30) {
+            Timber.e("setFirEqualizer: expected 30 values, got ${array.size}")
+            return false
+        }
+        val doubleArray = DoubleArray(30)
         for((i, str) in array.withIndex())
         {
             val number = str.toDoubleOrNull()
-            if(number == null) {
+            if(number == null || !number.isFinite()) {
                 Timber.e("setFirEqualizer: malformed EQ string")
                 return false
             }
@@ -170,12 +211,16 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
     fun setCompander(enable: Boolean, timeConstant: Float, granularity: Int, tfTransforms: Int, bands: String): Boolean
     {
-        val doubleArray = DoubleArray(14)
         val array = bands.split(";")
+        if (array.size != 14) {
+            Timber.e("setCompander: expected 14 values, got ${array.size}")
+            return false
+        }
+        val doubleArray = DoubleArray(14)
         for((i, str) in array.withIndex())
         {
             val number = str.toDoubleOrNull()
-            if(number == null) {
+            if(number == null || !number.isFinite()) {
                 Timber.e("setCompander: malformed string")
                 return false
             }
@@ -263,6 +308,37 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
         return setConvolverInternal(true, imp, info[0], info[1], info[2])
     }
+
+    fun setDarwinFilter(packagePath: String, selectedFilter: String, autoHeadroom: Boolean): Boolean {
+        val file = File(FileLibraryPreference.createFullPathCompat(context, packagePath))
+        if (!file.isFile) {
+            setConvolverInternal(false, FloatArray(0), 0, 0, 0)
+            callbacks?.onConvolverParseError(ProcessorMessage.ConvolverErrorCode.DarwinMissing)
+            return false
+        }
+
+        return try {
+            val impulse = DarwinFilterPackage.read(file, selectedFilter)
+            val gain = if (autoHeadroom) DarwinOversampling.headroomScale(impulse.samples) else 1f
+            setConvolverInternal(
+                true,
+                DarwinOversampling.applyGain(impulse.samples, gain),
+                1,
+                impulse.samples.size,
+                impulse.crc
+            )
+        } catch (ex: Exception) {
+            Timber.e(ex, "Failed to read Darwin filter package")
+            callbacks?.onConvolverParseError(ProcessorMessage.ConvolverErrorCode.DarwinCorrupted)
+            false
+        }
+    }
+
+    fun setConvolverCoefficients(samples: FloatArray, crc: Int): Boolean =
+        setConvolverInternal(true, samples, 1, samples.size, crc)
+
+    fun disableConvolver(): Boolean =
+        setConvolverInternal(false, FloatArray(0), 0, 0, 0)
 
     fun setGraphicEq(enable: Boolean, bands: String): Boolean
     {
@@ -373,7 +449,15 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
         return safeFileReader(fullPath)?.use {
             val name = File(fullPath).name
-            setLiveprogInternal(enable, name, it.readText())
+            val source = it.readText()
+            val parser = EelParser().apply {
+                contents = source
+                parse()
+            }
+            val initializedSource = parser.properties.fold(source) { script, property ->
+                property.manipulateProperty(script) ?: script
+            }
+            setLiveprogInternal(enable, name, initializedSource)
         } ?: false
     }
 
@@ -388,6 +472,7 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
 
     // Effect config
     abstract fun setOutputControl(threshold: Float, release: Float, postGain: Float): Boolean
+    open fun setOutputLimiterEnabled(enabled: Boolean): Boolean = true
     abstract fun setReverb(enable: Boolean, preset: Int): Boolean
     abstract fun setCrossfeed(enable: Boolean, mode: Int): Boolean
     abstract fun setCrossfeedCustom(enable: Boolean, fcut: Int, feed: Int): Boolean
@@ -421,6 +506,7 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
     }
 
     companion object {
+        private const val SHARED_CONVOLVER = "shared_convolver"
         private val dfMergeFreq = java.text.DecimalFormat("0.00", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.ENGLISH))
         private val dfMergeGain = java.text.DecimalFormat("0.000000", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.ENGLISH))
     }

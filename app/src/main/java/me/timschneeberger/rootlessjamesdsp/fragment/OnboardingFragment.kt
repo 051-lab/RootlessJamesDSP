@@ -85,16 +85,17 @@ class OnboardingFragment : Fragment() {
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Timber.d("Shizuku binder received")
         shizukuAlive = true
-        updateSetupInstructions()
+        if (_binding != null) updateSetupInstructions()
     }
     private val binderDeadListener =  Shizuku.OnBinderDeadListener {
         Timber.d("Shizuku binder died")
         shizukuAlive = false
-        updateSetupInstructions()
+        if (_binding != null) updateSetupInstructions()
     }
     private val requestPermissionResultListener = OnRequestPermissionResult()
 
-    private lateinit var binding: OnboardingFragmentBinding
+    private var _binding: OnboardingFragmentBinding? = null
+    private val binding get() = _binding!!
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +103,7 @@ class OnboardingFragment : Fragment() {
         runtimePermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { isGranted ->
+            if (_binding == null) return@registerForActivityResult
             if (isGranted.all { it.value }) {
                 // This callback is async, call goToPage directly from here
                 if(currentPage == PAGE_RUNTIME_PERMISSIONS)
@@ -122,7 +124,7 @@ class OnboardingFragment : Fragment() {
     ): View {
         useRoot = requireActivity().intent.getBooleanExtra(EXTRA_ROOT_SETUP_DUMP_PERM, false)
         redoAdbSetup = requireActivity().intent.getBooleanExtra(EXTRA_ROOTLESS_REDO_ADB_SETUP, false)
-        binding = OnboardingFragmentBinding.inflate(layoutInflater, viewGroup, false)
+        _binding = OnboardingFragmentBinding.inflate(layoutInflater, viewGroup, false)
         return binding.root
     }
 
@@ -285,6 +287,7 @@ class OnboardingFragment : Fragment() {
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
         Shizuku.removeRequestPermissionResultListener(requestPermissionResultListener)
+        _binding = null
     }
 
     fun onBackPressed(): Boolean {

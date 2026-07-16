@@ -31,7 +31,8 @@ import timber.log.Timber
 import java.util.UUID
 
 class GraphicEqualizerFragment : Fragment() {
-    private lateinit var binding: FragmentGraphicEqBinding
+    private var _binding: FragmentGraphicEqBinding? = null
+    private val binding get() = _binding!!
 
     private val adapter: GraphicEqNodeAdapter
         get() = binding.nodeList.adapter as GraphicEqNodeAdapter
@@ -45,14 +46,17 @@ class GraphicEqualizerFragment : Fragment() {
     private var editorActive = false
         set(value) {
             field = value
-            binding.add.isEnabled = !value
-            binding.reset.isEnabled = !value
-            binding.autoeq.isEnabled = !value
-            binding.editString.isEnabled = !value
+            _binding?.let {
+                it.add.isEnabled = !value
+                it.reset.isEnabled = !value
+                it.autoeq.isEnabled = !value
+                it.editString.isEnabled = !value
+            }
         }
 
     private val autoEqSelectorLauncher =
         registerForActivityResult(AutoEqSelectorContract()) { result ->
+            if (_binding == null) return@registerForActivityResult
             result?.let {
                 adapter.nodes.deserialize(it)
                 save()
@@ -82,12 +86,18 @@ class GraphicEqualizerFragment : Fragment() {
         super.onDestroy()
     }
 
+    override fun onDestroyView() {
+        binding.nodeList.adapter = null
+        _binding = null
+        super.onDestroyView()
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentGraphicEqBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentGraphicEqBinding.inflate(layoutInflater, container, false)
 
         binding.previewCard.setOnClickListener {
             if(resources.configuration.orientation != ORIENTATION_LANDSCAPE) {

@@ -13,6 +13,7 @@ import androidx.preference.Preference
 import androidx.preference.Preference.SummaryProvider
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceScreen
+import androidx.preference.ListPreference
 import androidx.recyclerview.widget.RecyclerView
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.activity.GraphicEqualizerActivity
@@ -20,7 +21,9 @@ import me.timschneeberger.rootlessjamesdsp.activity.LiveprogEditorActivity
 import me.timschneeberger.rootlessjamesdsp.activity.ParametricEqualizerActivity
 import me.timschneeberger.rootlessjamesdsp.activity.LiveprogParamsActivity
 import me.timschneeberger.rootlessjamesdsp.adapter.RoundedRipplePreferenceGroupAdapter
+import me.timschneeberger.rootlessjamesdsp.dsp.DarwinFilterPackage
 import me.timschneeberger.rootlessjamesdsp.liveprog.EelParser
+import me.timschneeberger.rootlessjamesdsp.interop.PreferenceCache
 import me.timschneeberger.rootlessjamesdsp.preference.CompanderPreference
 import me.timschneeberger.rootlessjamesdsp.preference.EqualizerPreference
 import me.timschneeberger.rootlessjamesdsp.preference.FileLibraryPreference
@@ -34,6 +37,7 @@ import me.timschneeberger.rootlessjamesdsp.utils.preferences.Preferences
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import timber.log.Timber
+import java.io.File
 import kotlin.math.roundToInt
 
 
@@ -43,7 +47,17 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
     private var recyclerView: RecyclerView? = null
 
     private val listener =
-        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when (key) {
+                context?.getString(R.string.key_darwin_enable) -> if (
+                    preferenceManager.sharedPreferences?.getBoolean(key, false) == true
+                ) PreferenceCache.getPreferences(requireContext(), Constants.PREF_CONVOLVER)
+                    .edit().putBoolean(getString(R.string.key_convolver_enable), false).apply()
+                context?.getString(R.string.key_convolver_enable) -> if (
+                    preferenceManager.sharedPreferences?.getBoolean(key, false) == true
+                ) PreferenceCache.getPreferences(requireContext(), Constants.PREF_DARWIN)
+                    .edit().putBoolean(getString(R.string.key_darwin_enable), false).apply()
+            }
             requireContext().sendLocalBroadcast(Intent(Constants.ACTION_PREFERENCES_UPDATED))
         }
 
@@ -81,6 +95,37 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
         requireContext().registerLocalReceiver(receiver, IntentFilter(Constants.ACTION_PRESET_LOADED))
 
         when(args.getInt(BUNDLE_XML_RES)) {
+            R.xml.dsp_darwin_preferences -> {
+                val archive = findPreference<FileLibraryPreference>(getString(R.string.key_darwin_file))
+                val filter = findPreference<ListPreference>(getString(R.string.key_darwin_filter))
+                filter?.summaryProvider = SummaryProvider<ListPreference> {
+                    if (it.entries.isNullOrEmpty()) getString(R.string.darwin_no_filters) else it.entry
+                }
+
+                fun updateFilters(path: String) {
+                    val filters = try {
+                        DarwinFilterPackage.list(File(FileLibraryPreference.createFullPathCompat(requireContext(), path)))
+                    } catch (ex: Exception) {
+                        Timber.w(ex, "Invalid Darwin filter package")
+                        emptyList()
+                    }
+                    filter?.entries = filters.map { it.title }.toTypedArray()
+                    filter?.entryValues = filters.map { it.fileName }.toTypedArray()
+                    filter?.isEnabled = filters.isNotEmpty()
+                    if (filters.isNotEmpty() && filters.none { it.fileName == filter?.value }) {
+                        filter?.value = filters.first().fileName
+                    }
+                }
+
+                archive?.summaryProvider = SummaryProvider<FileLibraryPreference> {
+                    if (it.value.isNullOrBlank()) getString(R.string.darwin_no_package) else it.entry
+                }
+                updateFilters(archive?.value.orEmpty())
+                archive?.setOnPreferenceChangeListener { _, value ->
+                    updateFilters(value as String)
+                    true
+                }
+            }
             R.xml.dsp_compander_preferences -> {
                 findPreference<MaterialSeekbarPreference>(getString(R.string.key_compander_granularity))?.valueLabelOverride =
                     fun(it: Float): String {
@@ -218,10 +263,10 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         requireContext().unregisterLocalReceiver(receiver)
-        prefsApp.unregisterOnSharedPreferenceChangeListener(listener)
+        prefsApp.unregisterOnSharedPreferenceChangeListener(listenerApp)
         preferenceManager.sharedPreferences?.unregisterOnSharedPreferenceChangeListener(listener)
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")

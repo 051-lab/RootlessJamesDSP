@@ -84,6 +84,8 @@
 
     <!-- Device profiles -->
     <string name="key_profile_active" translatable="false">profile_active</string> <!-- static -->
+    <string name="key_processing_status" translatable="false">processing_status</string> <!-- static -->
+    <string name="key_processing_bypass" translatable="false">processing_bypass</string> <!-- static -->
 
     <!-- DSP -->
     <string name="key_compander_enable" translatable="false">compander_enable</string>
@@ -120,6 +122,12 @@
     <string name="key_convolver_file" translatable="false">convolver_file</string>
     <string name="key_convolver_mode" translatable="false">convolver_mode</string>
     <string name="key_convolver_adv_imp" translatable="false">convolver_adv_imp</string>
+
+    <string name="key_darwin_enable" translatable="false">darwin_enable</string>
+    <string name="key_darwin_file" translatable="false">darwin_file</string>
+    <string name="key_darwin_filter" translatable="false">darwin_filter</string>
+    <string name="key_darwin_harmonic" translatable="false">darwin_harmonic</string>
+    <string name="key_darwin_auto_headroom" translatable="false">darwin_auto_headroom</string>
 
     <string name="key_tube_enable" translatable="false">tube_enable</string>
     <string name="key_tube_drive" translatable="false">tube_drive</string>

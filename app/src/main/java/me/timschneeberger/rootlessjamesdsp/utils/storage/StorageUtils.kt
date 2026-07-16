@@ -5,29 +5,56 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import timber.log.Timber
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 
 object StorageUtils {
 
-    fun importFile(context: Context, targetDir: String, uri: Uri): File? {
+    fun importFile(
+        context: Context,
+        targetDir: String,
+        uri: Uri,
+        validator: ((InputStream) -> Boolean)? = null,
+    ): File? {
         val name = queryName(context, uri)
-        if(name == null) {
-            Timber.e("importFile: name is null")
+        if (name.isNullOrBlank() || '/' in name || '\\' in name || '\u0000' in name || name == "." || name == "..") {
+            Timber.e("importFile: unsafe or missing display name")
             return null
         }
 
-        val destinationFile = File(targetDir + File.separatorChar + name)
+        val directory = File(targetDir).canonicalFile
+        if (!directory.mkdirs() && !directory.isDirectory)
+            return null
+        val destinationFile = File(directory, name).canonicalFile
+        if (destinationFile.parentFile != directory)
+            return null
+        val temporary = try {
+            File.createTempFile(".import-", ".tmp", directory)
+        } catch (ex: Exception) {
+            Timber.e(ex, "Failed to create import staging file")
+            return null
+        }
         try {
-            context.contentResolver.openInputStream(uri)?.use { ins ->
-                if(!createFileFromStream(ins, destinationFile))
-                    return null
+            val input = context.contentResolver.openInputStream(uri) ?: return null
+            input.use { ins -> temporary.outputStream().use { out -> ins.copyTo(out) } }
+            if (validator != null && !temporary.inputStream().buffered().use(validator))
+                return null
+            try {
+                Files.move(
+                    temporary.toPath(), destinationFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), destinationFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
         } catch (ex: Exception) {
-            Timber.e(ex.message)
-            ex.printStackTrace()
+            Timber.e(ex, "Failed to import file")
             return null
+        } finally {
+            temporary.delete()
         }
         return destinationFile
     }
@@ -36,37 +63,27 @@ object StorageUtils {
         return try {
             context.contentResolver.openInputStream(uri)
         } catch (ex: Exception) {
-            Timber.e(ex.message)
-            ex.printStackTrace()
+            Timber.e(ex, "Failed to open input stream")
             null
         }
     }
 
-    private fun createFileFromStream(ins: InputStream, destination: File?): Boolean {
-        try {
-            FileOutputStream(destination).use { os ->
-                val buffer = ByteArray(4096)
-                var length: Int
-                while (ins.read(buffer).also { length = it } > 0) {
-                    os.write(buffer, 0, length)
-                }
-                os.flush()
+    fun queryName(context: Context, uri: Uri): String? {
+        return try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex < 0 || !cursor.moveToFirst() || cursor.isNull(nameIndex)) null
+                else cursor.getString(nameIndex)
             }
         } catch (ex: Exception) {
-            Timber.e(ex.message)
-            ex.printStackTrace()
-            return false
+            Timber.e(ex, "Failed to query file name")
+            null
         }
-        return true
-    }
-
-    fun queryName(context: Context, uri: Uri): String? {
-        val returnCursor = context.contentResolver.query(uri, null, null, null, null)
-        returnCursor ?: return null
-        val nameIndex: Int = returnCursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        returnCursor.moveToFirst()
-        val name: String = returnCursor.getString(nameIndex)
-        returnCursor.close()
-        return name
     }
 }

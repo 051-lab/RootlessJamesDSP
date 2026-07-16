@@ -76,12 +76,10 @@ class LiveprogParamsFragment : PreferenceFragmentCompat(), NonPersistentDatastor
 
         (baseProp as? EelNumberRangeProperty<Float>)?.apply {
             this.value = value
-            eelParser.manipulateProperty(this)
+            updateProperty(this)
         }
 
         updateResetMenuItem()
-
-        requireContext().sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_RELOAD_LIVEPROG))
     }
 
     private fun createPreferences(): PreferenceScreen {
@@ -108,10 +106,10 @@ class LiveprogParamsFragment : PreferenceFragmentCompat(), NonPersistentDatastor
                         Timber.d("List item with value $newValue selected")
 
                         currentProp.value = (newValue as? String)?.toIntOrNull() ?: 0
-                        eelParser.manipulateProperty(currentProp)
+                        if (!updateProperty(currentProp))
+                            return@setOnPreferenceChangeListener false
 
                         updateResetMenuItem()
-                        requireContext().sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_RELOAD_LIVEPROG))
                         true
                     }
                 }.let(screen::addPreference)
@@ -203,9 +201,37 @@ class LiveprogParamsFragment : PreferenceFragmentCompat(), NonPersistentDatastor
     }
 
     fun restoreDefaults() {
-        eelParser.restoreDefaults()
+        val supportsLiveUpdates = eelParser.findAnnotationLine("@slider") >= 0
+        if (eelParser.restoreDefaults()) {
+            if (supportsLiveUpdates) {
+                eelParser.properties
+                    .filterIsInstance<EelNumberRangeProperty<*>>()
+                    .forEach(::sendParameterUpdate)
+            } else {
+                requireContext().sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_RELOAD_LIVEPROG))
+            }
+        }
         reload()
-        requireContext().sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_RELOAD_LIVEPROG))
+    }
+
+    private fun updateProperty(property: EelNumberRangeProperty<*>): Boolean {
+        if (!eelParser.manipulateProperty(property))
+            return false
+
+        if (eelParser.findAnnotationLine("@slider") >= 0)
+            sendParameterUpdate(property)
+        else
+            requireContext().sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_RELOAD_LIVEPROG))
+        return true
+    }
+
+    private fun sendParameterUpdate(property: EelNumberRangeProperty<*>) {
+        requireContext().sendLocalBroadcast(
+            Intent(Constants.ACTION_SERVICE_UPDATE_LIVEPROG_PARAMETER).apply {
+                putExtra(Constants.EXTRA_LIVEPROG_PARAMETER_NAME, property.key)
+                putExtra(Constants.EXTRA_LIVEPROG_PARAMETER_VALUE, property.value.toFloat())
+            }
+        )
     }
 
     companion object {

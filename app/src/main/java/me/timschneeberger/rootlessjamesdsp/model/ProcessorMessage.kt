@@ -31,7 +31,9 @@ package me.timschneeberger.rootlessjamesdsp.model
          Unknown(0),
          Corrupted(1),
          NoFrames(2),
-         AdvParamsInvalid(3);
+         AdvParamsInvalid(3),
+         DarwinCorrupted(4),
+         DarwinMissing(5);
 
          companion object {
              fun fromInt(value: Int) = values().first { it.value == value }

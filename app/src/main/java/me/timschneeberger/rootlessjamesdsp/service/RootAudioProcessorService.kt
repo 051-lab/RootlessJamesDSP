@@ -1,5 +1,6 @@
 package me.timschneeberger.rootlessjamesdsp.service
 
+import android.annotation.SuppressLint
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -12,8 +13,8 @@ import androidx.core.content.getSystemService
 import androidx.lifecycle.Observer
 import androidx.lifecycle.asLiveData
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
@@ -74,6 +75,7 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
     private val app
         get() = application as MainApplication
 
+    @SuppressLint("ForegroundServiceType")
     override fun onCreate() {
         super.onCreate()
 
@@ -149,7 +151,7 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
             AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION -> {
                 if(!app.isEnhancedProcessing) {
                     val sessionId = intent.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, -1)
-                    MainScope().launch {
+                    applicationScope.launch {
                         if (sessionId != 0)
                             delay(800)
                         app.rootSessionDatabase.removeSessionByIntent(intent)
@@ -165,7 +167,6 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         isServiceDisposing = true
 
         // Stop foreground service
@@ -178,11 +179,15 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
         sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_STOPPED))
 
         app.rootSessionDatabase.clearSessions()
+        sessionDumpManager?.destroy()
+        sessionDumpManager = null
+        applicationScope.cancel()
 
         preferences.unregisterOnSharedPreferenceChangeListener(this)
         app.rootSessionDatabase.unregisterOnSessionChangeListener(this)
 
         notificationManager.cancel(Notifications.ID_SERVICE_STATUS)
+        super.onDestroy()
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
@@ -210,6 +215,7 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
     private fun setupEnhancedProcessing() {
         app.rootSessionDatabase.clearSessions()
 
+        sessionDumpManager?.destroy()
         sessionDumpManager = RootSessionDumpManager(this)
         sessionDumpManager?.setOnSessionDump(app.rootSessionDatabase::update)
         sessionDumpManager?.setOnDumpMethodChanged(app.rootSessionDatabase::clearSessions)

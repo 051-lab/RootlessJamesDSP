@@ -4,7 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.preference.ListPreference
 import androidx.preference.Preference
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.R
@@ -87,7 +87,7 @@ class SettingsAudioFormatFragment : SettingsBaseFragment() {
 
         fun runBenchmark() = context?.let { ctx ->
             BenchmarkManager.runBenchmarks(ctx) {
-                CoroutineScope(Dispatchers.Main).launch {
+                lifecycleScope.launch(Dispatchers.Main) {
                     benchmark?.isChecked = BenchmarkManager.hasBenchmarksCached()
                 }
             }
