@@ -7,8 +7,8 @@ The four workstreams discussed in chat group every finding below. Checked items 
 - [x] Move the accumulated work to `feature/darwin-liveprog-audio-stability`.
 - [x] Commit the native DSP changes and reference that concrete submodule revision from the Android repository.
 - [x] Keep the user-supplied Darwin archive and downloaded F-Droid evidence out of version control.
-- [ ] Publish the native commit to a `051-lab/JamesDSPManager` fork and update `.gitmodules`.
-- [ ] Push the Android branch and verify a clean recursive clone produces the same tested APK.
+- [x] Publish the native commit to a `051-lab/JamesDSPManager` fork and update `.gitmodules`.
+- [x] Push the Android branch and verify a clean recursive clone produces the same tested APK.
 
 ## Independent review remediation roadmap (2026-07-16)
 
