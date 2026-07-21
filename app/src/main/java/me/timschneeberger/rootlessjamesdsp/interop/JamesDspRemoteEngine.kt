@@ -31,6 +31,8 @@ class JamesDspRemoteEngine(
     callbacks: JamesDspWrapper.JamesDspCallbacks? = null,
 ) : JamesDspBaseEngine(context, callbacks) {
 
+    private val effectLock = Any()
+
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -44,15 +46,26 @@ class JamesDspRemoteEngine(
         }
     }
 
-    var effect: AudioEffectHidden? = createEffect()
+    private var effect: AudioEffectHidden? = createEffect()
+
+    private fun <T> withEffect(fallback: T, action: (AudioEffectHidden) -> T): T =
+        synchronized(effectLock) {
+            val current = effect ?: return@synchronized fallback
+            try {
+                action(current)
+            } catch (ex: IllegalStateException) {
+                Timber.e(ex, "AudioEffect is in an invalid state")
+                fallback
+            }
+        }
 
     override var enabled: Boolean
-        set(value) { effect?.enabled = value }
-        get() = effect?.enabled ?: false
+        set(value) { withEffect(Unit) { it.enabled = value } }
+        get() = withEffect(false) { it.enabled }
 
     override var sampleRate: Float
         get() {
-            super.sampleRate = effect.getParameterInt(20001)?.toFloat() ?: -0f
+            super.sampleRate = withEffect(-0f) { it.getParameterInt(20001)?.toFloat() ?: -0f }
             return super.sampleRate
         }
         set(_){}
@@ -81,20 +94,29 @@ class JamesDspRemoteEngine(
     }
 
     private fun checkEngine() {
-        if (!isPidValid) {
-            Timber.e("PID ($pid) for session $sessionId invalid. Engine probably crashed or detached.")
-            context.toast("Engine crashed. Rebooting JamesDSP.", false)
-            rebootEngine()
-        }
-
-        if (isSampleRateAbnormal) {
-            Timber.e("PID ($pid) for session $sessionId invalid. Engine crashed.")
-            context.toast("Abnormal sampling rate. Rebooting JamesDSP.", false)
-            rebootEngine()
+        synchronized(effectLock) {
+            val current = effect ?: return
+            val currentPid = current.getParameterInt(20002) ?: -1
+            val currentSampleRate = current.getParameterInt(20001) ?: -1
+            if (currentPid <= 0) {
+                Timber.e("PID ($currentPid) for session $sessionId invalid. Engine probably crashed or detached.")
+                context.toast("Engine crashed. Rebooting JamesDSP.", false)
+                rebootEngineLocked()
+            } else if (currentSampleRate <= 0) {
+                Timber.e("Sampling rate ($currentSampleRate) for session $sessionId invalid. Engine crashed.")
+                context.toast("Abnormal sampling rate. Rebooting JamesDSP.", false)
+                rebootEngineLocked()
+            }
         }
     }
 
     private fun rebootEngine() {
+        synchronized(effectLock) {
+            rebootEngineLocked()
+        }
+    }
+
+    private fun rebootEngineLocked() {
         try {
             effect?.release()
             effect = createEffect()
@@ -103,12 +125,11 @@ class JamesDspRemoteEngine(
             Timber.e("Failed to re-instantiate JamesDSP effect")
             Timber.e(ex.cause)
             effect = null
-            return
         }
     }
 
     override fun syncWithPreferences(forceUpdateNamespaces: Array<String>?) {
-        if(effect == null) {
+        if (synchronized(effectLock) { effect == null }) {
             Timber.d("Rejecting update due to disposed engine")
             return
         }
@@ -119,16 +140,20 @@ class JamesDspRemoteEngine(
 
     override fun close() {
         context.unregisterLocalReceiver(broadcastReceiver)
-        effect?.release()
-        effect = null
         super.close()
+        synchronized(effectLock) {
+            effect?.release()
+            effect = null
+        }
     }
 
     override fun setOutputControl(threshold: Float, release: Float, postGain: Float): Boolean {
-        return effect.setParameterFloatArray(
-            1500,
-            floatArrayOf(threshold, release, postGain)
-        ) == AudioEffect.SUCCESS
+        return withEffect(false) { current ->
+            current.setParameterFloatArray(
+                1500,
+                floatArrayOf(threshold, release, postGain)
+            ) == AudioEffect.SUCCESS
+        }
     }
 
     override fun setCompanderInternal(
@@ -138,24 +163,31 @@ class JamesDspRemoteEngine(
         tfTransforms: Int,
         bands: DoubleArray
     ): Boolean {
-        return (effect.setParameterFloatArray(
-            115,
-            floatArrayOf(timeConstant, granularity.toFloat(), tfTransforms.toFloat()) + bands.map { it.toFloat() }
-        ) == AudioEffect.SUCCESS) and (effect.setParameter(1200, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            (current.setParameterFloatArray(
+                115,
+                floatArrayOf(timeConstant, granularity.toFloat(), tfTransforms.toFloat()) + bands.map { it.toFloat() }
+            ) == AudioEffect.SUCCESS) and
+                (current.setParameter(1200, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setReverb(enable: Boolean, preset: Int): Boolean {
-        var ret = true
-        if (enable)
-            ret = effect.setParameter(128, preset.toShort()) == AudioEffect.SUCCESS
-        return ret and (effect.setParameter(1203, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            var ret = true
+            if (enable)
+                ret = current.setParameter(128, preset.toShort()) == AudioEffect.SUCCESS
+            ret and (current.setParameter(1203, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setCrossfeed(enable: Boolean, mode: Int): Boolean {
-        var ret = true
-        if (enable)
-            ret = effect.setParameter(188, mode.toShort()) == AudioEffect.SUCCESS
-        return ret and (effect.setParameter(1208, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            var ret = true
+            if (enable)
+                ret = current.setParameter(188, mode.toShort()) == AudioEffect.SUCCESS
+            ret and (current.setParameter(1208, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setCrossfeedCustom(enable: Boolean, fcut: Int, feed: Int): Boolean {
@@ -163,24 +195,30 @@ class JamesDspRemoteEngine(
     }
 
     override fun setBassBoost(enable: Boolean, maxGain: Float): Boolean {
-        var ret = true
-        if (enable)
-            ret = effect.setParameter(112, maxGain.roundToInt().toShort()) == AudioEffect.SUCCESS
-        return ret and (effect.setParameter(1201, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            var ret = true
+            if (enable)
+                ret = current.setParameter(112, maxGain.roundToInt().toShort()) == AudioEffect.SUCCESS
+            ret and (current.setParameter(1201, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setStereoEnhancement(enable: Boolean, level: Float): Boolean {
-        var ret = true
-        if (enable)
-            ret = effect.setParameter(137, level.roundToInt().toShort()) == AudioEffect.SUCCESS
-        return ret and (effect.setParameter(1204, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            var ret = true
+            if (enable)
+                ret = current.setParameter(137, level.roundToInt().toShort()) == AudioEffect.SUCCESS
+            ret and (current.setParameter(1204, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setVacuumTube(enable: Boolean, level: Float): Boolean {
-        var ret = true
-        if (enable)
-            ret = effect.setParameter(150, (level * 1000).roundToInt().toShort()) == AudioEffect.SUCCESS
-        return ret and (effect.setParameter(1206, enable.toShort()) == AudioEffect.SUCCESS)
+        return withEffect(false) { current ->
+            var ret = true
+            if (enable)
+                ret = current.setParameter(150, (level * 1000).roundToInt().toShort()) == AudioEffect.SUCCESS
+            ret and (current.setParameter(1206, enable.toShort()) == AudioEffect.SUCCESS)
+        }
     }
 
     override fun setMultiEqualizerInternal(
@@ -189,30 +227,36 @@ class JamesDspRemoteEngine(
         interpolationMode: Int,
         bands: DoubleArray,
     ): Boolean {
-        var ret = true
+        return withEffect(false) { current ->
+            var ret = true
 
-        if (enable) {
-            val properties = floatArrayOf(
-                filterType.toFloat(),
-                if(interpolationMode == 1) 1.0f else -1.0f
-            ) + bands.map { it.toFloat() }
-            ret = effect.setParameterFloatArray(116, properties) == AudioEffect.SUCCESS
+            if (enable) {
+                val properties = floatArrayOf(
+                    filterType.toFloat(),
+                    if(interpolationMode == 1) 1.0f else -1.0f
+                ) + bands.map { it.toFloat() }
+                ret = current.setParameterFloatArray(116, properties) == AudioEffect.SUCCESS
+            }
+
+            ret and (current.setParameter(1202, enable.toShort()) == AudioEffect.SUCCESS)
         }
-
-        return ret and (effect.setParameter(1202, enable.toShort()) == AudioEffect.SUCCESS)
     }
 
     override fun setVdcInternal(enable: Boolean, vdc: String): Boolean {
-        val prevCrc = this.ddcHash
-        val currentCrc = vdc.crc()
+        return withEffect(false) { current ->
+            val prevCrc = current.getParameterInt(30001) ?: -1
+            val currentCrc = vdc.crc()
 
-        Timber.i("VDC hash before: $prevCrc, current: $currentCrc")
-        if (prevCrc != currentCrc && enable) {
-            effect.setParameterCharBuffer(12001, 10009, vdc)
-            effect.setParameter(25001, currentCrc) // Commit hash
+            Timber.i("VDC hash before: $prevCrc, current: $currentCrc")
+            if (prevCrc != currentCrc && enable) {
+                if (current.setParameterCharBuffer(12001, 10009, vdc) != AudioEffect.SUCCESS)
+                    return@withEffect false
+                if (current.setParameter(25001, currentCrc) != AudioEffect.SUCCESS)
+                    return@withEffect false
+            }
+
+            current.setParameter(1212, enable.toShort()) == AudioEffect.SUCCESS
         }
-
-        return effect.setParameter(1212, enable.toShort()) == AudioEffect.SUCCESS
     }
 
     override fun setConvolverInternal(
@@ -222,42 +266,58 @@ class JamesDspRemoteEngine(
         irFrames: Int,
         irCrc: Int
     ): Boolean {
+        return withEffect(false) { current ->
+            val prevCrc = current.getParameterInt(30003) ?: -1
 
-        val prevCrc = this.convolverHash
+            Timber.i("Convolver hash before: $prevCrc, current: $irCrc")
+            if (prevCrc != irCrc && enable) {
+                if (current.setParameterImpulseResponseBuffer(
+                        12000,
+                        10004,
+                        impulseResponse,
+                        irChannels
+                    ) != AudioEffect.SUCCESS
+                ) return@withEffect false
+                if (current.setParameter(25003, irCrc) != AudioEffect.SUCCESS)
+                    return@withEffect false
+            }
 
-        Timber.i("Convolver hash before: $prevCrc, current: $irCrc")
-        if (prevCrc != irCrc && enable) {
-            effect.setParameterImpulseResponseBuffer(12000, 10004, impulseResponse, irChannels)
-            effect.setParameter(25003, irCrc) // Commit hash
+            current.setParameter(1205, enable.toShort()) == AudioEffect.SUCCESS
         }
-
-        return effect.setParameter(1205, enable.toShort()) == AudioEffect.SUCCESS
     }
 
     override fun setGraphicEqInternal(enable: Boolean, bands: String): Boolean {
-        val prevCrc = this.graphicEqHash
-        val currentCrc = bands.crc()
+        return withEffect(false) { current ->
+            val prevCrc = current.getParameterInt(30000) ?: -1
+            val currentCrc = bands.crc()
 
-        Timber.i("GraphicEQ hash before: $prevCrc, current: $currentCrc")
-        if (prevCrc != currentCrc && enable) {
-            effect.setParameterCharBuffer(12001, 10006, bands)
-            effect.setParameter(25000, currentCrc) // Commit hash
+            Timber.i("GraphicEQ hash before: $prevCrc, current: $currentCrc")
+            if (prevCrc != currentCrc && enable) {
+                if (current.setParameterCharBuffer(12001, 10006, bands) != AudioEffect.SUCCESS)
+                    return@withEffect false
+                if (current.setParameter(25000, currentCrc) != AudioEffect.SUCCESS)
+                    return@withEffect false
+            }
+
+            current.setParameter(1210, enable.toShort()) == AudioEffect.SUCCESS
         }
-
-        return effect.setParameter(1210, enable.toShort()) == AudioEffect.SUCCESS
     }
 
     override fun setLiveprogInternal(enable: Boolean, name: String, script: String): Boolean {
-        val prevCrc = this.liveprogHash
-        val currentCrc = script.crc()
+        return withEffect(false) { current ->
+            val prevCrc = current.getParameterInt(30002) ?: -1
+            val currentCrc = script.crc()
 
-        Timber.i("Liveprog hash before: $prevCrc, current: $currentCrc")
-        if (prevCrc != currentCrc && enable) {
-            effect.setParameterCharBuffer(12001, 10010, script)
-            effect.setParameter(25002, currentCrc) // Commit hash
+            Timber.i("Liveprog hash before: $prevCrc, current: $currentCrc")
+            if (prevCrc != currentCrc && enable) {
+                if (current.setParameterCharBuffer(12001, 10010, script) != AudioEffect.SUCCESS)
+                    return@withEffect false
+                if (current.setParameter(25002, currentCrc) != AudioEffect.SUCCESS)
+                    return@withEffect false
+            }
+
+            current.setParameter(1213, enable.toShort()) == AudioEffect.SUCCESS
         }
-
-        return effect.setParameter(1213, enable.toShort()) == AudioEffect.SUCCESS
     }
 
     // Feature support
@@ -271,27 +331,27 @@ class JamesDspRemoteEngine(
 
     // Status
     val pid: Int
-        get() = effect.getParameterInt(20002) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(20002) ?: -1 }
     val isPidValid: Boolean
         get() = pid > 0
     val isSampleRateAbnormal: Boolean
         get() = sampleRate <= 0
     val paramCommitCount: Int
-        get() = effect.getParameterInt(19998) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(19998) ?: -1 }
     val isPresetInitialized: Boolean
         get() = paramCommitCount > 0
     val bufferLength: Int
-        get() = effect.getParameterInt(19999) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(19999) ?: -1 }
     val allocatedBlockLength: Int
-        get() = effect.getParameterInt(20000) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(20000) ?: -1 }
     val graphicEqHash: Int
-        get() = effect.getParameterInt(30000) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(30000) ?: -1 }
     val ddcHash: Int
-        get() = effect.getParameterInt(30001) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(30001) ?: -1 }
     val liveprogHash: Int
-        get() = effect.getParameterInt(30002) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(30002) ?: -1 }
     val convolverHash: Int
-        get() = effect.getParameterInt(30003) ?: -1
+        get() = withEffect(-1) { it.getParameterInt(30003) ?: -1 }
 
     enum class PluginState {
         Unavailable,

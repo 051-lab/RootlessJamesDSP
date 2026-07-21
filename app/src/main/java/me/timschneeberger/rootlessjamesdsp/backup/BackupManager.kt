@@ -11,6 +11,7 @@ import me.timschneeberger.rootlessjamesdsp.preference.FileLibraryPreference
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.broadcastPresetLoadEvent
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.sendLocalBroadcast
+import me.timschneeberger.rootlessjamesdsp.utils.preferences.DspPreferenceStore
 import me.timschneeberger.rootlessjamesdsp.utils.preferences.Preferences
 import me.timschneeberger.rootlessjamesdsp.utils.storage.Tar
 import okio.buffer
@@ -123,15 +124,17 @@ class BackupManager(private val context: Context): KoinComponent {
                 throw UnsupportedOperationException(context.getString(R.string.backup_restore_error_version_too_new))
             }
 
+            DspPreferenceStore.restore(
+                context,
+                File(targetFolder, "shared_prefs"),
+                clearExisting = !dirty
+            )
+
             // Clean restore
             if(!dirty) {
                 // Remove profiles
                 File(context.applicationInfo.dataDir + "/files/profiles").deleteRecursively()
 
-                // Remove shared dsp prefs
-                File(context.applicationInfo.dataDir + "/shared_prefs").listFiles { file: File ->
-                    file.name.startsWith("dsp_") && file.extension == "xml"
-                }?.forEach { it.delete() }
                 // Remove external files
                 context.getExternalFilesDir(null)
                     ?.absoluteFile
@@ -141,9 +144,7 @@ class BackupManager(private val context: Context): KoinComponent {
 
             var enableDeviceProfiles = false
             targetFolder.listFiles()?.forEach { file ->
-                if(file.isDirectory && file.name == "shared_prefs")
-                    file.copyRecursively(File(context.applicationInfo.dataDir + "/shared_prefs"), true)
-                else if(file.isDirectory && file.name == "profiles") {
+                if(file.isDirectory && file.name == "profiles") {
                     enableDeviceProfiles = true
                     file.copyRecursively(
                         File(context.applicationInfo.dataDir + "/files/profiles"),

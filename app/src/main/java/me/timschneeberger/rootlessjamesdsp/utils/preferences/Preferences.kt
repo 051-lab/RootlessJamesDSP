@@ -4,8 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.StringRes
-import me.timschneeberger.rootlessjamesdsp.BuildConfig
-import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
 import kotlin.reflect.KClass
 
@@ -47,8 +45,6 @@ class Preferences(val context: Context) {
                 Long::class -> preferences.getLong(key, defValue as Long) as T
                 Float::class -> preferences.getFloat(key, defValue as Float) as T
                 else -> throw IllegalArgumentException("Unknown type ${type.qualifiedName}")
-            }.also {
-                CrashlyticsImpl.setCustomKey("${namespace()}_$key", it.toString())
             }
         }
 
@@ -112,7 +108,6 @@ class Preferences(val context: Context) {
         fun <T : Any> set(@StringRes nameRes: Int, value: T, async: Boolean = true, type: KClass<T>) {
             val key = context.getString(nameRes)
             val edit = preferences.edit()
-            CrashlyticsImpl.setCustomKey("${namespace()}_$key", value.toString())
 
             when(type) {
                 Boolean::class -> edit.putBoolean(key, value as Boolean)

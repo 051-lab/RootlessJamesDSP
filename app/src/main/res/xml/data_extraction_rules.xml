@@ -1,15 +1,27 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
--->
+<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-    <cloud-backup disableIfNoEncryptionCapabilities="false">
-        <include domain="sharedpref" path="."/>
-        <exclude domain="sharedpref" path="variable.xml" />
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="sharedpref" path="dsp_bass.xml" />
+        <include domain="sharedpref" path="dsp_compander.xml" />
+        <include domain="sharedpref" path="dsp_crossfeed.xml" />
+        <include domain="sharedpref" path="dsp_equalizer.xml" />
+        <include domain="sharedpref" path="dsp_graphiceq.xml" />
+        <include domain="sharedpref" path="dsp_output_control.xml" />
+        <include domain="sharedpref" path="dsp_parametriceq.xml" />
+        <include domain="sharedpref" path="dsp_reverb.xml" />
+        <include domain="sharedpref" path="dsp_stereowide.xml" />
+        <include domain="sharedpref" path="dsp_tube.xml" />
     </cloud-backup>
-    <device-transfer disableIfNoEncryptionCapabilities="false">
-        <include domain="sharedpref" path="."/>
-        <exclude domain="sharedpref" path="variable.xml" />
+    <device-transfer>
+        <include domain="sharedpref" path="dsp_bass.xml" />
+        <include domain="sharedpref" path="dsp_compander.xml" />
+        <include domain="sharedpref" path="dsp_crossfeed.xml" />
+        <include domain="sharedpref" path="dsp_equalizer.xml" />
+        <include domain="sharedpref" path="dsp_graphiceq.xml" />
+        <include domain="sharedpref" path="dsp_output_control.xml" />
+        <include domain="sharedpref" path="dsp_parametriceq.xml" />
+        <include domain="sharedpref" path="dsp_reverb.xml" />
+        <include domain="sharedpref" path="dsp_stereowide.xml" />
+        <include domain="sharedpref" path="dsp_tube.xml" />
     </device-transfer>
 </data-extraction-rules>

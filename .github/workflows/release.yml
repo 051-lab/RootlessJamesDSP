@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUILD_TOOLS_VERSION: 35.0.0
+
+jobs:
+  build:
+    name: Build ${{ matrix.flavor }} release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: Rootless
+            output: rootlessFull
+          - flavor: Root
+            output: rootFull
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+
+      - name: Install pinned NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Build unsigned release APKs
+        run: ./gradlew assemble${{ matrix.flavor }}FullRelease --stacktrace
+
+      - name: Upload unsigned APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-${{ matrix.output }}-apks
+          path: app/build/outputs/apk/${{ matrix.output }}/release/*-unsigned.apk
+          if-no-files-found: error
+
+  sign-and-publish:
+    name: Sign and create draft release
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download unsigned APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: unsigned-*-apks
+          path: unsigned
+          merge-multiple: true
+
+      - name: Sign and verify APKs
+        env:
+          SIGNING_KEYSTORE: ${{ secrets.SIGNING_KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_CERT_SHA256: ${{ secrets.SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          required=(SIGNING_KEYSTORE KEY_ALIAS KEYSTORE_PASSWORD KEY_PASSWORD SIGNING_CERT_SHA256)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required release secret $name is not configured" >&2
+              exit 1
+            fi
+          done
+
+          keystore="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEYSTORE" | base64 --decode > "$keystore"
+          mkdir -p signed
+          expected_digest="${SIGNING_CERT_SHA256//:/}"
+          expected_digest="${expected_digest^^}"
+          signed_count=0
+
+          while IFS= read -r -d '' apk; do
+            filename="$(basename "$apk")"
+            output="signed/${filename%-unsigned.apk}-signed.apk"
+            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" sign \
+              --ks "$keystore" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass env:KEYSTORE_PASSWORD \
+              --key-pass env:KEY_PASSWORD \
+              --out "$output" \
+              "$apk"
+            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$output"
+            actual_digest="$(
+              "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --print-certs "$output" \
+                | awk -F': ' '/Signer #1 certificate SHA-256 digest/ { print toupper($2); exit }'
+            )"
+            if [[ "$actual_digest" != "$expected_digest" ]]; then
+              echo "Signing certificate mismatch for $filename" >&2
+              exit 1
+            fi
+            signed_count=$((signed_count + 1))
+          done < <(find unsigned -type f -name '*-unsigned.apk' -print0)
+
+          if [[ "$signed_count" -eq 0 ]]; then
+            echo "No unsigned APKs were found" >&2
+            exit 1
+          fi
+
+      - name: Upload signed release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-release-apks
+          path: signed/*.apk
+          if-no-files-found: error
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" signed/*.apk --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" signed/*.apk \
+              --draft \
+              --generate-notes \
+              --title "RootlessJamesDSP $GITHUB_REF_NAME"
+          fi

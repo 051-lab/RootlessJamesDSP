@@ -331,6 +331,24 @@ void circshift(float *x, int n, int k)
 {
 	k < 0 ? shift(x, -k, n) : shift(x, n - k, n);
 }
+
+static int applyShiftAndClear(float *samples, int length, jint *shiftAmount)
+{
+	if (!samples || !shiftAmount || length < 1)
+		return 0;
+	if (*shiftAmount < 0 || *shiftAmount >= length)
+	{
+		*shiftAmount = 0;
+		return 0;
+	}
+	if (*shiftAmount == 0)
+		return 1;
+
+	circshift(samples, length, *shiftAmount);
+	if (*shiftAmount > 1)
+		memset(samples, 0, (size_t)(*shiftAmount - 1) * sizeof(*samples));
+	return 1;
+}
 #define NUMPTS 15
 #define NUMPTS_DRS (7)
 ierper pch1, pch2, pch3;
@@ -511,9 +529,8 @@ JNIEXPORT jfloatArray JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_J
 			for (unsigned int i = 0; i < channels; i++)
 			{
 				outPtr[i] = &splittedBuffer[i][range[0]];
-				circshift(outPtr[i], xLen, javaAdvSetPtr[i + 2]);
-				for (int j = 0; j < javaAdvSetPtr[i + 2] - 1; j++)
-					outPtr[i][j] = 0.0f;
+				if (!applyShiftAndClear(outPtr[i], xLen, &javaAdvSetPtr[i + 2]))
+					isAdvSetValid = 0;
 			}
 		}
 		else
@@ -539,9 +556,8 @@ JNIEXPORT jfloatArray JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_J
 			for (unsigned int i = 0; i < channels; i++)
 			{
 				outPtr[i] = splittedBuffer[i];
-				circshift(outPtr[i], xLen, javaAdvSetPtr[i + 2]);
-				for (int j = 0; j < javaAdvSetPtr[i + 2] - 1; j++)
-					outPtr[i][j] = 0.0f;
+				if (!applyShiftAndClear(outPtr[i], xLen, &javaAdvSetPtr[i + 2]))
+					isAdvSetValid = 0;
 			}
 		}
 
@@ -559,9 +575,8 @@ JNIEXPORT jfloatArray JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_J
 			goto cleanup;
 		for (unsigned int i = 0; i < channels; i++)
 		{
-			circshift(splittedBuffer[i], (int)frameCount, javaAdvSetPtr[i + 2]);
-			for (int j = 0; j < javaAdvSetPtr[i + 2] - 1; j++)
-				splittedBuffer[i][j] = 0.0f;
+			if (!applyShiftAndClear(splittedBuffer[i], (int)frameCount, &javaAdvSetPtr[i + 2]))
+				isAdvSetValid = 0;
 		}
 		crc32 = channel_joinFloat_crc(splittedBuffer, channels, pFrameBuffer, (unsigned int)frameCount);
 	}
@@ -647,8 +662,8 @@ JNIEXPORT jint JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
 	jfloat *javaResponsePtr = (jfloat*) (*env)->GetFloatArrayElements(env, response, 0);
 	memcpy(freq + 1, javaFreqPtr, NUMPTS * sizeof(double));
 	memcpy(gain + 1, javaGainPtr, NUMPTS * sizeof(double));
-	(*env)->ReleaseDoubleArrayElements(env, jfreq, javaFreqPtr, 0);
-	(*env)->ReleaseDoubleArrayElements(env, jgain, javaGainPtr, 0);
+	(*env)->ReleaseDoubleArrayElements(env, jfreq, javaFreqPtr, JNI_ABORT);
+	(*env)->ReleaseDoubleArrayElements(env, jgain, javaGainPtr, JNI_ABORT);
 	freq[0] = 0.0;
 	gain[0] = gain[1];
 	freq[NUMPTS + 1] = 24000.0;
@@ -668,8 +683,9 @@ JNIEXPORT jint JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
 	{
 		javaResponsePtr[i] = (float)getValueAt(&lerpPtr->cb, javadispFreqPtr[i]);
 	}
-	(*env)->ReleaseDoubleArrayElements(env, dispFreq, javadispFreqPtr, 0);
+	(*env)->ReleaseDoubleArrayElements(env, dispFreq, javadispFreqPtr, JNI_ABORT);
 	(*env)->SetFloatArrayRegion(env, response, 0, queryPts, javaResponsePtr);
+	(*env)->ReleaseFloatArrayElements(env, response, javaResponsePtr, JNI_ABORT);
 	return 0;
 }
 
@@ -685,8 +701,8 @@ JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
 
     memcpy(freqComp + 1, javaFreqPtr, NUMPTS_DRS * sizeof(double));
     memcpy(gainComp + 1, javaGainPtr, NUMPTS_DRS * sizeof(double));
-    (*env)->ReleaseDoubleArrayElements(env, jfreq, javaFreqPtr, 0);
-    (*env)->ReleaseDoubleArrayElements(env, jgain, javaGainPtr, 0);
+    (*env)->ReleaseDoubleArrayElements(env, jfreq, javaFreqPtr, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jgain, javaGainPtr, JNI_ABORT);
 
     freqComp[0] = 0.0;
     gainComp[0] = gainComp[1];
@@ -697,8 +713,9 @@ JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
     for (int i = 0; i < queryPts; i++)
         javaResponsePtr[i] = (float)getValueAt(&lerpPtr->cb, javadispFreqPtr[i]);
 
-    (*env)->ReleaseDoubleArrayElements(env, dispFreq, javadispFreqPtr, 0);
+    (*env)->ReleaseDoubleArrayElements(env, dispFreq, javadispFreqPtr, JNI_ABORT);
     (*env)->SetFloatArrayRegion(env, response, 0, queryPts, javaResponsePtr);
+    (*env)->ReleaseFloatArrayElements(env, response, javaResponsePtr, JNI_ABORT);
 }
 
 JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpResToolbox_ComputeIIREqualizerCplx(JNIEnv *env, jobject obj, jint srate, jint order, jdoubleArray jfreq, jdoubleArray jgain, jint nPts, jdoubleArray jdispFreq, jdoubleArray jcplxRe, jdoubleArray jcplxIm)
@@ -729,9 +746,11 @@ JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
 
     (*env)->SetDoubleArrayRegion(env, jcplxRe, 0, nPts, cplxRe);
     (*env)->SetDoubleArrayRegion(env, jcplxIm, 0, nPts, cplxIm);
-    (*env)->ReleaseDoubleArrayElements(env, jfreq, freqs, 0);
-    (*env)->ReleaseDoubleArrayElements(env, jgain, gains, 0);
-    (*env)->ReleaseDoubleArrayElements(env, jdispFreq, dispFreq, 0);
+    (*env)->ReleaseDoubleArrayElements(env, jfreq, freqs, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jgain, gains, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jdispFreq, dispFreq, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jcplxRe, cplxRe, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jcplxIm, cplxIm, JNI_ABORT);
 }
 
 JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpResToolbox_ComputeIIREqualizerResponse(JNIEnv *env, jobject obj, jint nPts, jdoubleArray jcplxRe, jdoubleArray jcplxIm, jfloatArray jresponse)
@@ -743,6 +762,7 @@ JNIEXPORT void JNICALL Java_me_timschneeberger_rootlessjamesdsp_interop_JdspImpR
         response[i] = 20.0f * log10f(hypot(cplxRe[i], cplxIm[i]));
     }
     (*env)->SetFloatArrayRegion(env, jresponse, 0, nPts, response);
-    (*env)->ReleaseDoubleArrayElements(env, jcplxRe, cplxRe, 0);
-    (*env)->ReleaseDoubleArrayElements(env, jcplxIm, cplxIm, 0);
+    (*env)->ReleaseDoubleArrayElements(env, jcplxRe, cplxRe, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, jcplxIm, cplxIm, JNI_ABORT);
+    (*env)->ReleaseFloatArrayElements(env, jresponse, response, JNI_ABORT);
 }

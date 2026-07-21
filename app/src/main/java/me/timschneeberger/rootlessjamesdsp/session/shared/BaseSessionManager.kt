@@ -22,9 +22,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.model.preference.SessionUpdateMode
 import me.timschneeberger.rootlessjamesdsp.service.NotificationListenerService
@@ -61,6 +63,7 @@ abstract class BaseSessionManager(protected val context: Context) : DumpManager.
     private val pollingMutex = Mutex()
     private val pollingScope = CoroutineScope(Dispatchers.Main)
     private var continuousPollingJob: Job? = null
+    private var pollingGeneration = 0L
 
     // Callbacks
     private var audioPlaybackCallback: AudioManager.AudioPlaybackCallback? = null
@@ -137,7 +140,6 @@ abstract class BaseSessionManager(protected val context: Context) : DumpManager.
                         ?: preferences.getDefault<String>(it).toLong()
                 }
 
-                continuousPollingJob?.cancel()
                 updatePollingMode()
                 Timber.d("Session polling interval set to ${pollingTimeout}ms")
             }
@@ -165,33 +167,46 @@ abstract class BaseSessionManager(protected val context: Context) : DumpManager.
 
     private fun updatePollingMode()
     {
+        val previousJob = continuousPollingJob
+        continuousPollingJob = null
+        previousJob?.cancel()
+        val generation = ++pollingGeneration
+
         when (sessionUpdateMode) {
             SessionUpdateMode.ContinuousPolling -> {
                 continuousPollingJob = pollingScope.launch {
-                    while(continuousPollingJob != null && continuousPollingJob?.isCancelled == false)
-                    {
+                    previousJob?.join()
+                    if (generation != pollingGeneration)
+                        return@launch
+
+                    while(isActive) {
                         pollSessionDump()
                         delay(pollingTimeout)
                     }
                 }
             }
-            SessionUpdateMode.Listener -> {
-                continuousPollingJob?.cancel()
-            }
+            SessionUpdateMode.Listener -> Unit
         }
     }
 
     private suspend fun pollSessionDump(blocking: Boolean = true)
     {
-        if(pollingMutex.isLocked && !blocking)
-        {
-            return
+        val dump = if (blocking) {
+            pollingMutex.withLock { dumpSessionsOffMain() }
+        } else {
+            if (!pollingMutex.tryLock())
+                return
+            try {
+                dumpSessionsOffMain()
+            } finally {
+                pollingMutex.unlock()
+            }
         }
-
-        pollingMutex.withLock {
-            handleSessionDump(dumpManager.dumpSessions())
-        }
+        handleSessionDump(dump)
     }
+
+    private suspend fun dumpSessionsOffMain(): ISessionInfoDump? =
+        withContext(Dispatchers.IO) { dumpManager.dumpSessions() }
 
     fun pollOnce(blocking: Boolean)
     {

@@ -1,4 +1,5 @@
-name: Build signed app
+name: Build and test
+
 on:
   pull_request:
     branches:
@@ -6,173 +7,102 @@ on:
   push:
     branches:
       - master
-    tags:
-      - v*
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build app
-    runs-on: ubuntu-latest
-
+  verify:
+    name: Verify ${{ matrix.flavor }}
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
-        flavor: [Rootless, Root]
-        
-    steps:
-      - id: flavor
-        uses: ASzc/change-string-case-action@v5
-        with:
-          string: ${{ matrix.flavor }}
-          
-      - name: Install packages
-        run: |
-          sudo apt update
-          sudo apt install rename
-    
-      - name: Clone repo
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+        include:
+          - flavor: Rootless
+            output: rootlessFull
+          - flavor: Root
+            output: rootFull
 
-      - name: Validate Gradle Wrapper
-        uses: gradle/wrapper-validation-action@v3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
+          distribution: temurin
           java-version: 17
-          distribution: adopt
 
-      - name: Run unit tests
-        uses: gradle/gradle-command-action@v2
-        with:
-          arguments: test${{ matrix.flavor }}FullDebugUnitTest
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
-      - name: Run lint
-        uses: gradle/gradle-command-action@v2
-        with:
-          arguments: lint${{ matrix.flavor }}FullDebug
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
-      - name: Build release app
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: gradle/gradle-command-action@v2
-        with:
-          arguments: assemble${{ matrix.flavor }}FullRelease
+      - name: Install pinned NDK
+        run: sdkmanager "ndk;27.0.12077973"
 
-      - name: Build preview app
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: gradle/gradle-command-action@v2
+      - name: Test, lint, and build
+        run: >-
+          ./gradlew
+          test${{ matrix.flavor }}FullDebugUnitTest
+          lint${{ matrix.flavor }}FullDebug
+          assemble${{ matrix.flavor }}FullDebug
+          --stacktrace
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          arguments: assemble${{ matrix.flavor }}FullPreview
-          
-      - name: Declare preview build type
-        if: "!startsWith(github.ref, 'refs/tags/')"
+          name: ${{ matrix.flavor }}JamesDSP-debug-apks
+          path: app/build/outputs/apk/${{ matrix.output }}/debug/*.apk
+          if-no-files-found: error
+
+  instrumented-tests:
+    name: Native instrumented tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+
+      - name: Install pinned NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Enable KVM access
         run: |
-          set -x
-          echo "BUILD_TYPE=preview" >> $GITHUB_ENV
-          
-      - name: Declare release build type
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          set -x
-          echo "BUILD_TYPE=release" >> $GITHUB_ENV
-          
-      - name: Get tag name
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          set -x
-          echo "VERSION_TAG=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
-       
-      - name: Sign APKs
-        uses: ilharp/sign-android-release@v2
-        with:
-          buildToolsVersion: 35.0.0
-          releaseDir: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}
-          signingKey: ${{ secrets.SIGNING_KEYSTORE }}
-          keyAlias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
-      - name: Rename build artifacts
-        run: |
-          set -e
-          ls -l app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}
-          rename -v 's/-unsigned-signed//g' app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*.apk
-          rm -f app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*unsigned*.apk || true
-          ls -l app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}
-
-      - name: Upload build artifact (universal)
-        uses: actions/upload-artifact@v4
+      - name: Run native and Android integration tests
+        uses: ReactiveCircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
         with:
-          name: "${{ matrix.flavor }}JamesDSP-universal-preview_apk"
-          path: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*universal-${{ env.BUILD_TYPE }}-signed.apk
-
-      - name: Upload build artifact (x86)
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ matrix.flavor }}JamesDSP-x86-preview_apk"
-          path: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*x86-${{ env.BUILD_TYPE }}-signed.apk
-          
-      - name: Upload build artifact (x86_64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ matrix.flavor }}JamesDSP-x86_64-preview_apk"
-          path: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*x86_64-${{ env.BUILD_TYPE }}-signed.apk
-          
-      - name: Upload build artifact (armeabi-v7a)
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ matrix.flavor }}JamesDSP-armeabi-v7a-preview_apk"
-          path: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*armeabi-v7a-${{ env.BUILD_TYPE }}-signed.apk
-               
-      - name: Upload build artifact (arm64-v8a)
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ matrix.flavor }}JamesDSP-arm64-v8a-preview_apk"
-          path: app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*arm64-v8a-${{ env.BUILD_TYPE }}-signed.apk
-       
-      - name: Deploy root flavor APKs to the server
-        if: ${{ steps.flavor.outputs.lowercase == 'root' && startsWith(github.ref, 'refs/tags/') && github.repository == 'timschneeb/RootlessJamesDSP' }}
-        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
-        with:
-            username: 'tim'
-            server: 'srv1.timschneeberger.me'
-            ssh_private_key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }} 
-            local_path: "app/build/outputs/apk/${{ steps.flavor.outputs.lowercase }}Full/${{ env.BUILD_TYPE }}/*universal-${{ env.BUILD_TYPE }}-signed.apk"
-            remote_path: '/srv/http/nightly.timschneeberger.me/jamesdsp-rootfull'
-            sftpArgs: '-o ConnectTimeout=5'
-       
-      - name: Changelog
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: ardalanamini/auto-changelog@v3
-        id: changelog
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          release-name: ${{ env.VERSION_TAG }}
-          mention-authors: false
-          mention-new-contributors: false
-          include-compare: true
-          
-      - name: Read changelog template
-        id: changelog_post
-        uses: andstor/file-reader-action@v1
-        with:
-          path: ".github/CHANGELOG_POSTFIX.md"
-          
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/') && github.repository == 'timschneeb/RootlessJamesDSP'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ env.VERSION_TAG }}
-          name: RootlessJamesDSP ${{ env.VERSION_TAG }}
-          body: "${{ steps.changelog.outputs.changelog }} &#x20; ${{ steps.changelog_post.outputs.contents }}"
-          #files: |
-          #   app/build/outputs/apk/rootlessFull/${{ env.BUILD_TYPE }}/*-signed.apk
-          draft: true
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: ./gradlew connectedRootlessFdroidDebugAndroidTest --stacktrace

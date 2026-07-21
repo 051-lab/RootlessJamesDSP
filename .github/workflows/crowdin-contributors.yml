@@ -3,23 +3,27 @@ name: Crowdin Contributors Action
 on:
   # When you push to the `main` branch
   push:
-    branches: [ main ]
+    branches: [ master ]
   # And optionally, once every 12 hours
   schedule:
     - cron: '0 */12 * * *' # https://crontab.guru/#0_*/12_*_*_*
   # To manually run this workflow
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   crowdin-contributors:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Generate Crowdin Contributors data
-      uses: andrii-bodnar/action-crowdin-contributors@v1.0.1
+      uses: andrii-bodnar/action-crowdin-contributors@fc82f8869407523b3b64457acf7e1fde4d77bd0d # v1.0.1
       id: contributors
       with:
         contributors_per_line: 6
@@ -33,14 +37,14 @@ jobs:
         CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
         
     - name: Create translator info json
-      uses: DamianReeves/write-file-action@v1.2
+      uses: DamianReeves/write-file-action@0a7fcbe1960c53fc08fe789fa4850d24885f4d84 # v1.2
       with:
         path: app/src/main/res/raw/translators.json
         write-mode: overwrite
         contents: ${{ steps.contributors.outputs.json_report }}
 
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v6.1.0
+      uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
       with:
         title: Update Crowdin Contributors table
         body: By [action-crowdin-contributors](https://github.com/andrii-bodnar/action-crowdin-contributors) GitHub action

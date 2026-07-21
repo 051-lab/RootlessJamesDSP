@@ -15,6 +15,7 @@ android {
 
     val SUPPORTED_ABIS = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
     compileSdk = AndroidConfig.compileSdk
+    ndkVersion = "27.0.12077973"
     project.setProperty("archivesBaseName", "RootlessJamesDSP-v${AndroidConfig.versionName}")
 
     defaultConfig {
@@ -51,7 +52,7 @@ android {
             manifestPlaceholders["crashlyticsCollectionEnabled"] = "false"
         }
         getByName("release") {
-            manifestPlaceholders += mapOf("crashlyticsCollectionEnabled" to "true")
+            manifestPlaceholders += mapOf("crashlyticsCollectionEnabled" to "false")
             configure<CrashlyticsExtension> {
                 nativeSymbolUploadEnabled = true
                 mappingFileUploadEnabled = false
@@ -60,10 +61,10 @@ android {
             //proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
             isMinifyEnabled = false
             isShrinkResources = false
-            signingConfig = signingConfigs.getByName("debug")
         }
         create("preview") {
             initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
             buildConfigField("boolean", "PREVIEW", "true")
 
             val debugType = getByName("debug")
@@ -119,6 +120,7 @@ android {
     sourceSets {
         // Use different app icon for non-release builds
         getByName("debug").res.srcDirs("src/debug/res")
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
     // Export multiple CPU architecture split apks
@@ -163,6 +165,10 @@ android {
         }
     }
     namespace = "me.timschneeberger.rootlessjamesdsp"
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 // Hooks to upload native symbols to crashlytics automatically
@@ -229,6 +235,7 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
+    androidTestImplementation("androidx.room:room-testing:$roomVersion")
 
     // Script editor
     implementation(project(":codeview"))
@@ -238,7 +245,7 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:${AndroidConfig.shizukuVersion}")
 
     // Used for backup file access
-    implementation("com.github.tachiyomiorg:unifile:17bec43")
+    implementation("com.github.tachiyomiorg:unifile:17bec434b81a1fb8bb2e5e1c37185cae088290a5")
 
     // Root APIs
     "rootImplementation"("com.github.topjohnwu.libsu:core:5.0.4")

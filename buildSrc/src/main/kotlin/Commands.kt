@@ -19,7 +19,10 @@ fun Project.getGitSha(): String {
 fun Project.getBuildTime(): String {
     val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'")
     df.timeZone = TimeZone.getTimeZone("UTC")
-    return df.format(Date())
+    val sourceDateEpoch = providers.environmentVariable("SOURCE_DATE_EPOCH").orNull
+        ?.toLongOrNull()
+        ?: runCommand("git log -1 --format=%ct").toLong()
+    return df.format(Date(sourceDateEpoch * 1000))
 }
 
 fun Project.runCommand(command: String): String {

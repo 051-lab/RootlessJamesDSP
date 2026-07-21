@@ -89,24 +89,7 @@ class AudioOutputStageInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File.createTempFile("mono-ir-", ".wav", context.cacheDir)
         try {
-            val samples = ShortArray(64).apply { this[0] = Short.MAX_VALUE }
-            val dataBytes = samples.size * Short.SIZE_BYTES
-            val wav = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN).apply {
-                put("RIFF".toByteArray())
-                putInt(36 + dataBytes)
-                put("WAVEfmt ".toByteArray())
-                putInt(16)
-                putShort(1)
-                putShort(1)
-                putInt(SAMPLE_RATE)
-                putInt(SAMPLE_RATE * Short.SIZE_BYTES)
-                putShort(Short.SIZE_BYTES.toShort())
-                putShort(16)
-                put("data".toByteArray())
-                putInt(dataBytes)
-                samples.forEach(::putShort)
-            }
-            file.writeBytes(wav.array())
+            writeMonoWav(file, ShortArray(64).apply { this[0] = Short.MAX_VALUE })
 
             val info = IntArray(4)
             val impulse = JdspImpResToolbox.ReadImpulseResponseToFloat(
@@ -120,6 +103,37 @@ class AudioOutputStageInstrumentedTest {
             assertNotNull(impulse)
             assertEquals(1, info[0])
             assertEquals(info[1], impulse!!.size)
+            assertTrue(impulse.all(Float::isFinite))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun rejectsShiftOutsideTrimmedImpulseLength() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val file = File.createTempFile("trimmed-mono-ir-", ".wav", context.cacheDir)
+        try {
+            writeMonoWav(file, ShortArray(64).apply {
+                this[24] = Short.MAX_VALUE
+                this[27] = (Short.MAX_VALUE / 2).toShort()
+            })
+            val info = IntArray(4)
+            val advanced = intArrayOf(-80, -100, 32, 0, 0, 0)
+
+            val impulse = JdspImpResToolbox.ReadImpulseResponseToFloat(
+                file.absolutePath,
+                SAMPLE_RATE,
+                info,
+                1,
+                advanced,
+            )
+
+            assertNotNull(impulse)
+            assertEquals(1, info[0])
+            assertEquals(info[1], impulse!!.size)
+            assertEquals(0, info[3])
+            assertEquals(0, advanced[2])
             assertTrue(impulse.all(Float::isFinite))
         } finally {
             file.delete()
@@ -212,6 +226,26 @@ class AudioOutputStageInstrumentedTest {
             frameOffset += frames
         }
         return result
+    }
+
+    private fun writeMonoWav(file: File, samples: ShortArray) {
+        val dataBytes = samples.size * Short.SIZE_BYTES
+        val wav = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray())
+            putInt(36 + dataBytes)
+            put("WAVEfmt ".toByteArray())
+            putInt(16)
+            putShort(1)
+            putShort(1)
+            putInt(SAMPLE_RATE)
+            putInt(SAMPLE_RATE * Short.SIZE_BYTES)
+            putShort(Short.SIZE_BYTES.toShort())
+            putShort(16)
+            put("data".toByteArray())
+            putInt(dataBytes)
+            samples.forEach(::putShort)
+        }
+        file.writeBytes(wav.array())
     }
 
     private fun magnitude(interleaved: FloatArray, frequency: Double): Double {

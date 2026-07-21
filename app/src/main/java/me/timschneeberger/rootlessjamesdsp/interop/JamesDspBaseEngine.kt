@@ -147,10 +147,16 @@ abstract class JamesDspBaseEngine(
             val darwinAutoHeadroom = cache.get(R.string.key_darwin_auto_headroom, true)
 
             val targets = cache.changedNamespaces.toTypedArray() + (forceUpdateNamespaces ?: arrayOf())
+            val committedNamespaces = mutableSetOf<String>()
             targets.map {
                 if (it == Constants.PREF_CONVOLVER || it == Constants.PREF_DARWIN) SHARED_CONVOLVER else it
             }.distinct().forEach {
                 Timber.i("Committing new changes in namespace '$it'")
+                val affectedNamespaces = if (it == SHARED_CONVOLVER) {
+                    setOf(Constants.PREF_CONVOLVER, Constants.PREF_DARWIN)
+                } else {
+                    setOf(it)
+                }
 
                 val result = when (it) {
                     Constants.PREF_OUTPUT -> setOutputControl(
@@ -178,12 +184,15 @@ abstract class JamesDspBaseEngine(
                     else -> true
                 }
 
-                if(!result) {
+                if(result) {
+                    committedNamespaces.addAll(affectedNamespaces)
+                } else {
+                    cache.markChangesAsPending(affectedNamespaces)
                     Timber.e("Failed to apply $it")
                 }
             }
 
-            cache.markChangesAsCommitted()
+            cache.markChangesAsCommitted(committedNamespaces)
             Timber.i("Preferences synchronized")
         }
     }

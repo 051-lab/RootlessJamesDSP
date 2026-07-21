@@ -34,6 +34,7 @@ import me.timschneeberger.rootlessjamesdsp.utils.Constants
 import me.timschneeberger.rootlessjamesdsp.utils.ProfileManager
 import me.timschneeberger.rootlessjamesdsp.utils.RoutingObserver
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.registerLocalReceiver
+import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.unregisterLocalReceiver
 import me.timschneeberger.rootlessjamesdsp.utils.isRoot
 import me.timschneeberger.rootlessjamesdsp.utils.isRootless
 import me.timschneeberger.rootlessjamesdsp.utils.notifications.Notifications
@@ -221,7 +222,7 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
 
     override fun onTerminate() {
         prefs.unregisterOnSharedPreferenceChangeListener(this)
-        unregisterReceiver(receiver)
+        unregisterLocalReceiver(receiver)
         super.onTerminate()
     }
 
@@ -239,6 +240,10 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
                     ThemeMode.Dark -> AppCompatDelegate.MODE_NIGHT_YES
                     ThemeMode.FollowSystem -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
                 }
+            )
+        } else if (!BuildConfig.FOSS_ONLY && key == getString(R.string.key_share_crash_reports)) {
+            CrashlyticsImpl.setCollectionEnabled(
+                prefs.get<Boolean>(R.string.key_share_crash_reports)
             )
         }
     }
@@ -290,20 +295,7 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
 
     /** A tree which logs important information for crash reporting.  */
     private class CrashReportingTree : DebugTree() {
-        private fun priorityAsString(priority: Int): String {
-            return when(priority){
-                Log.VERBOSE -> "V"
-                Log.DEBUG -> "D"
-                Log.INFO -> "I"
-                Log.WARN -> "W"
-                Log.ERROR -> "E"
-                Log.ASSERT -> "A"
-                else -> "?"
-            }
-        }
-
         override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
-            CrashlyticsImpl.log("[${priorityAsString(priority)}] ${tag ?: "???"}: $message")
             t?.takeIf { priority >= Log.WARN }?.let(CrashlyticsImpl::recordException)
         }
     }

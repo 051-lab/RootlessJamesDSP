@@ -3,7 +3,6 @@ package me.timschneeberger.rootlessjamesdsp.interop
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.StringRes
-import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import kotlin.reflect.KClass
 
 class PreferenceCache(val context: Context) {
@@ -36,7 +35,6 @@ class PreferenceCache(val context: Context) {
             }
         }
 
-        CrashlyticsImpl.setCustomKey("dsp_$name", current.toString())
         cache[name] = current as Any
         return current
     }
@@ -44,8 +42,15 @@ class PreferenceCache(val context: Context) {
     inline fun <reified T : Any> get(@StringRes nameRes: Int, default: T) =
         get(nameRes, default, T::class)
 
-    fun markChangesAsCommitted() {
-        changedNamespaces.clear()
+    fun markChangesAsCommitted(namespaces: Collection<String>) {
+        changedNamespaces.removeAll(namespaces.toSet())
+    }
+
+    fun markChangesAsPending(namespaces: Collection<String>) {
+        namespaces.forEach {
+            if (!changedNamespaces.contains(it))
+                changedNamespaces.add(it)
+        }
     }
 
     companion object {

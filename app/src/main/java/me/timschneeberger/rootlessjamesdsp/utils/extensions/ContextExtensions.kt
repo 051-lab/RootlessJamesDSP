@@ -45,6 +45,7 @@ import me.timschneeberger.rootlessjamesdsp.utils.extensions.CompatExtensions.get
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.CompatExtensions.getPackageInfoCompat
 import me.timschneeberger.rootlessjamesdsp.utils.isPlugin
 import me.timschneeberger.rootlessjamesdsp.utils.isRootless
+import me.timschneeberger.rootlessjamesdsp.utils.preferences.DspPreferenceStore
 import timber.log.Timber
 import java.io.File
 import kotlin.math.roundToInt
@@ -448,14 +449,8 @@ object ContextExtensions {
     }
 
     fun Context.restoreDspSettings(silent: Boolean = false) {
-        // Delete DSP settings
         Timber.d("Reverting dsp preferences")
-        File(applicationInfo.dataDir + "/shared_prefs")
-            .listFiles()?.forEach next@ { f ->
-                if(!f.name.startsWith("dsp_") || f.extension != "xml" || f.isDirectory)
-                    return@next
-                f.delete()
-            }
+        DspPreferenceStore.clear(this)
 
         if(!silent) {
             broadcastPresetLoadEvent()

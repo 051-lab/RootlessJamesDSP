@@ -287,8 +287,7 @@
         <receiver
             android:name=".receiver.PowerStateReceiver"
             android:enabled="true"
-            android:exported="true"
-            tools:ignore="ExportedReceiver">
+            android:exported="false">
             <intent-filter>
                 <action android:name="me.timschneeberger.rootlessjamesdsp.SET_POWER_STATE" />
             </intent-filter>
