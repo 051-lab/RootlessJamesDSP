@@ -105,4 +105,14 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: ./gradlew connectedRootlessFdroidDebugAndroidTest --stacktrace
+          script: ./gradlew connectedRootlessFdroidDebugAndroidTest --stacktrace || { adb logcat -b crash -d; exit 1; }
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: instrumented-test-reports
+          path: |
+            app/build/outputs/androidTest-results/connected
+            app/build/reports/androidTests/connected
+          if-no-files-found: ignore
