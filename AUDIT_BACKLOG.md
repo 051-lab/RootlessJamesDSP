@@ -31,7 +31,7 @@ Checks:
 - [x] Add an instrumentation regression that processes identical audio using fixed and varying partial-block lengths and compares the results.
 - [x] Extend the LiveProg runtime check to prove `srate` changes after an engine sample-rate update.
 - [x] Run host unit tests and `assembleRootlessFdroidDebug`.
-- [ ] On S24, verify playback with the screen on and off before and after enabling Darwin.
+- [x] On S24, verify playback with the screen on and off before and after enabling Darwin.
 
 Completion gate: no native allocation or convolution refresh occurs for ordinary partial reads, and rate-dependent tests pass at both 44.1 and 48 kHz.
 
@@ -99,6 +99,7 @@ Completion gate: malformed imported state is rejected or defaulted without a cra
 - [x] Run native instrumentation tests on the connected S24 Ultra.
 - [ ] Test S24 speakers and Bluetooth with screen on/off, browser playback, route reconnect, service restart, bypass, Darwin switching, and LiveProg reload stress.
 - [x] Install the final debug APK on the S24 Ultra and record its path and SHA-256.
+- [x] Seed the bundled Darwin package into newly loaded device profiles; verify live A2DP processing on the S24 Ultra.
 - [x] Add a Gradle-launcher line-ending rule for future source archives; this is packaging-only and does not block Android runtime testing.
 
 Deferred until reproduced by testing: bypass-state reset semantics, asynchronous service-destruction redesign, direct JNI audio buffers, immutable routing snapshots, and a different true-peak detector. These are not required to fix the confirmed defects above.

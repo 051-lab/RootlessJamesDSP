@@ -3,6 +3,9 @@ package me.timschneeberger.rootlessjamesdsp.interop
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.StringRes
+import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.utils.Constants
+import java.io.File
 import kotlin.reflect.KClass
 
 class PreferenceCache(val context: Context) {
@@ -54,6 +57,27 @@ class PreferenceCache(val context: Context) {
     }
 
     companion object {
+        const val BUNDLED_DARWIN_PATH = "Darwin/Darwin_v2_forward.zip"
+        const val BUNDLED_DARWIN_FILTER = "Def1_MP_fast_normal.flt"
+
+        fun applyBundledDarwinDefaults(context: Context) {
+            val externalFiles = context.getExternalFilesDir(null) ?: return
+            if (!File(externalFiles, BUNDLED_DARWIN_PATH).isFile) return
+
+            val fileKey = context.getString(R.string.key_darwin_file)
+            val darwin = getPreferences(context, Constants.PREF_DARWIN)
+            if ((darwin.all[fileKey] as? String).isNullOrBlank()) {
+                darwin.edit()
+                    .putBoolean(context.getString(R.string.key_darwin_enable), true)
+                    .putString(fileKey, BUNDLED_DARWIN_PATH)
+                    .putString(context.getString(R.string.key_darwin_filter), BUNDLED_DARWIN_FILTER)
+                    .apply()
+                getPreferences(context, Constants.PREF_CONVOLVER).edit()
+                    .putBoolean(context.getString(R.string.key_convolver_enable), false)
+                    .apply()
+            }
+        }
+
         @Suppress("DEPRECATION")
         fun getPreferences(
             context: Context,

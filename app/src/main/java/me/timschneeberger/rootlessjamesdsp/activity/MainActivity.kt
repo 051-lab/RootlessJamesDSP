@@ -145,18 +145,7 @@ class MainActivity : BaseActivity() {
 
         val firstBoot = prefsVar.get<Boolean>(R.string.key_first_boot)
         assets.installPrivateAssets(this, force = firstBoot)
-        val darwinPreferences = PreferenceCache.getPreferences(this, Constants.PREF_DARWIN)
-        if (File(getExternalFilesDir(null), BUNDLED_DARWIN_PATH).isFile &&
-            !darwinPreferences.contains(getString(R.string.key_darwin_file))) {
-            darwinPreferences.edit()
-                .putBoolean(getString(R.string.key_darwin_enable), true)
-                .putString(getString(R.string.key_darwin_file), BUNDLED_DARWIN_PATH)
-                .putString(getString(R.string.key_darwin_filter), BUNDLED_DARWIN_FILTER)
-                .apply()
-            PreferenceCache.getPreferences(this, Constants.PREF_CONVOLVER).edit()
-                .putBoolean(getString(R.string.key_convolver_enable), false)
-                .apply()
-        }
+        PreferenceCache.applyBundledDarwinDefaults(this)
 
         mediaProjectionManager = getSystemService<MediaProjectionManager>()!!
         binding = ActivityDspMainBinding.inflate(layoutInflater)
@@ -812,8 +801,6 @@ class MainActivity : BaseActivity() {
     private var presetDialogHost: FakePresetFragment? = null
 
     companion object {
-        private const val BUNDLED_DARWIN_PATH = "Darwin/Darwin_v2_forward.zip"
-        private const val BUNDLED_DARWIN_FILTER = "Def1_MP_fast_normal.flt"
         const val EXTRA_FORCE_SHOW_CAPTURE_PROMPT = "ForceShowCapturePrompt"
 
         private val DEBUG_IGNORE_MISSING_LIBRARY = BuildConfig.DEBUG

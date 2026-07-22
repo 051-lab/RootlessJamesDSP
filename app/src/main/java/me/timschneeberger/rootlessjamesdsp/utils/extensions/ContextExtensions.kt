@@ -40,6 +40,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.databinding.DialogTextinputBinding
+import me.timschneeberger.rootlessjamesdsp.interop.PreferenceCache
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.CompatExtensions.getApplicationInfoCompat
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.CompatExtensions.getPackageInfoCompat
@@ -451,6 +452,7 @@ object ContextExtensions {
     fun Context.restoreDspSettings(silent: Boolean = false) {
         Timber.d("Reverting dsp preferences")
         DspPreferenceStore.clear(this)
+        PreferenceCache.applyBundledDarwinDefaults(this)
 
         if(!silent) {
             broadcastPresetLoadEvent()

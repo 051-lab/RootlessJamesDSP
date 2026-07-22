@@ -9,6 +9,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.interop.PreferenceCache
 import me.timschneeberger.rootlessjamesdsp.model.preset.Preset
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.registerLocalReceiver
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.restoreDspSettings
@@ -165,6 +166,7 @@ class ProfileManager : BroadcastReceiver(), RoutingObserver.RoutingChangedCallba
                 context.restoreDspSettings()
             }
 
+            PreferenceCache.applyBundledDarwinDefaults(context)
             profile.save(File(getProfileDirectory(null), FILE_PROFILE))
         }
     }
