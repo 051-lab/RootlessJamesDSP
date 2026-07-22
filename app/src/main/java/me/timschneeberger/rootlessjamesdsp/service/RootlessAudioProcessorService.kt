@@ -41,6 +41,7 @@ import me.timschneeberger.rootlessjamesdsp.dsp.Pcm16Converter
 import me.timschneeberger.rootlessjamesdsp.interop.JamesDspLocalEngine
 import me.timschneeberger.rootlessjamesdsp.interop.PreferenceCache
 import me.timschneeberger.rootlessjamesdsp.interop.ProcessorMessageHandler
+import me.timschneeberger.rootlessjamesdsp.interop.sanitizeFiniteFloat
 import me.timschneeberger.rootlessjamesdsp.model.IEffectSession
 import me.timschneeberger.rootlessjamesdsp.model.ProcessorMessage
 import me.timschneeberger.rootlessjamesdsp.model.preference.AudioEncoding
@@ -1043,8 +1044,11 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             prefs.getBoolean(getString(R.string.key_darwin_enable), false),
             prefs.getString(getString(R.string.key_darwin_file), "").orEmpty(),
             prefs.getString(getString(R.string.key_darwin_filter), "").orEmpty(),
-            prefs.getFloat(getString(R.string.key_darwin_harmonic), 0f)
-                .takeIf(Float::isFinite)?.coerceIn(0f, 100f) ?: 0f,
+            sanitizeFiniteFloat(
+                prefs.getFloat(getString(R.string.key_darwin_harmonic), 0f),
+                0f,
+                0f..100f,
+            ),
             prefs.getBoolean(getString(R.string.key_darwin_auto_headroom), true)
         )
     }
@@ -1052,12 +1056,21 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     private fun readOutputConfig(): OutputConfig {
         val prefs = PreferenceCache.getPreferences(this, Constants.PREF_OUTPUT)
         return OutputConfig(
-            prefs.getFloat(getString(R.string.key_limiter_threshold), -0.1f)
-                .takeIf(Float::isFinite)?.coerceIn(-60f, -0.1f) ?: -0.1f,
-            prefs.getFloat(getString(R.string.key_limiter_release), 60f)
-                .takeIf(Float::isFinite)?.coerceIn(1.5f, 500f) ?: 60f,
-            prefs.getFloat(getString(R.string.key_output_postgain), 0f)
-                .takeIf(Float::isFinite)?.coerceIn(-15f, 15f) ?: 0f,
+            sanitizeFiniteFloat(
+                prefs.getFloat(getString(R.string.key_limiter_threshold), -0.1f),
+                -0.1f,
+                -60f..-0.1f,
+            ),
+            sanitizeFiniteFloat(
+                prefs.getFloat(getString(R.string.key_limiter_release), 60f),
+                60f,
+                1.5f..500f,
+            ),
+            sanitizeFiniteFloat(
+                prefs.getFloat(getString(R.string.key_output_postgain), 0f),
+                0f,
+                -15f..15f,
+            ),
         )
     }
 

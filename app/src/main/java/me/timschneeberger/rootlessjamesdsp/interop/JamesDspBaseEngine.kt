@@ -86,9 +86,16 @@ abstract class JamesDspBaseEngine(
             cache.select(Constants.PREF_COMPANDER)
             val compEnabled = cache.get(R.string.key_compander_enable, false)
             val compTimeConst = cache.get(R.string.key_compander_timeconstant, 0.22f)
-            val compGranularity = cache.get(R.string.key_compander_granularity, 0f)
-                .takeIf(Float::isFinite)?.toInt()?.coerceIn(0, 4) ?: 0
-            val compTfTransforms = cache.get(R.string.key_compander_tftransforms, "0").toIntOrNull()?.coerceIn(0, 3) ?: 0
+            val compGranularity = sanitizeFiniteFloat(
+                cache.get(R.string.key_compander_granularity, 0f),
+                0f,
+                0f..4f,
+            ).toInt()
+            val compTfTransforms = parseClampedInt(
+                cache.get(R.string.key_compander_tftransforms, "0"),
+                0,
+                0..3,
+            )
             val compResponse = cache.get(R.string.key_compander_response, "95.0;200.0;400.0;800.0;1600.0;3400.0;7500.0;0;0;0;0;0;0;0")
 
             cache.select(Constants.PREF_BASS)
@@ -97,8 +104,8 @@ abstract class JamesDspBaseEngine(
 
             cache.select(Constants.PREF_EQ)
             val eqEnabled = cache.get(R.string.key_eq_enable, false)
-            val eqFilterType = cache.get(R.string.key_eq_filter_type, "0").toIntOrNull()?.coerceIn(0, 5) ?: 0
-            val eqInterpolationMode = cache.get(R.string.key_eq_interpolation, "0").toIntOrNull()?.coerceIn(0, 1) ?: 0
+            val eqFilterType = parseClampedInt(cache.get(R.string.key_eq_filter_type, "0"), 0, 0..5)
+            val eqInterpolationMode = parseClampedInt(cache.get(R.string.key_eq_interpolation, "0"), 0, 0..1)
             val eqBands = cache.get(R.string.key_eq_bands, Constants.DEFAULT_EQ)
 
             cache.select(Constants.PREF_GEQ)
@@ -112,7 +119,7 @@ abstract class JamesDspBaseEngine(
 
             cache.select(Constants.PREF_REVERB)
             val reverbEnabled = cache.get(R.string.key_reverb_enable, false)
-            val reverbPreset = cache.get(R.string.key_reverb_preset, "0").toIntOrNull()?.coerceIn(0, 18) ?: 0
+            val reverbPreset = parseClampedInt(cache.get(R.string.key_reverb_preset, "0"), 0, 0..18)
 
             cache.select(Constants.PREF_STEREOWIDE)
             val swEnabled = cache.get(R.string.key_stereowide_enable, false)
@@ -120,7 +127,7 @@ abstract class JamesDspBaseEngine(
 
             cache.select(Constants.PREF_CROSSFEED)
             val crossfeedEnabled = cache.get(R.string.key_crossfeed_enable, false)
-            val crossfeedMode = cache.get(R.string.key_crossfeed_mode, "0").toIntOrNull()?.coerceIn(0, 5) ?: 0
+            val crossfeedMode = parseClampedInt(cache.get(R.string.key_crossfeed_mode, "0"), 0, 0..5)
 
             cache.select(Constants.PREF_TUBE)
             val tubeEnabled = cache.get(R.string.key_tube_enable, false)
@@ -138,7 +145,7 @@ abstract class JamesDspBaseEngine(
             val convolverEnabled = cache.get(R.string.key_convolver_enable, false)
             val convolverFile = cache.get(R.string.key_convolver_file, "")
             val convolverAdvImp = cache.get(R.string.key_convolver_adv_imp, Constants.DEFAULT_CONVOLVER_ADVIMP)
-            val convolverMode = cache.get(R.string.key_convolver_mode, "0").toIntOrNull()?.coerceIn(0, 2) ?: 0
+            val convolverMode = parseClampedInt(cache.get(R.string.key_convolver_mode, "0"), 0, 0..2)
 
             cache.select(Constants.PREF_DARWIN)
             val darwinEnabled = cache.get(R.string.key_darwin_enable, false)
@@ -199,44 +206,22 @@ abstract class JamesDspBaseEngine(
 
     fun setMultiEqualizer(enable: Boolean, filterType: Int, interpolationMode: Int, bands: String): Boolean
     {
-        val array = bands.split(";")
-        if (array.size != 30) {
-            Timber.e("setFirEqualizer: expected 30 values, got ${array.size}")
+        val values = parseFiniteDoubles(bands, 30)
+        if (values == null) {
+            Timber.e("setFirEqualizer: expected 30 finite values")
             return false
         }
-        val doubleArray = DoubleArray(30)
-        for((i, str) in array.withIndex())
-        {
-            val number = str.toDoubleOrNull()
-            if(number == null || !number.isFinite()) {
-                Timber.e("setFirEqualizer: malformed EQ string")
-                return false
-            }
-            doubleArray[i] = number
-        }
-
-        return setMultiEqualizerInternal(enable, filterType, interpolationMode, doubleArray)
+        return setMultiEqualizerInternal(enable, filterType, interpolationMode, values)
     }
 
     fun setCompander(enable: Boolean, timeConstant: Float, granularity: Int, tfTransforms: Int, bands: String): Boolean
     {
-        val array = bands.split(";")
-        if (array.size != 14) {
-            Timber.e("setCompander: expected 14 values, got ${array.size}")
+        val values = parseFiniteDoubles(bands, 14)
+        if (values == null) {
+            Timber.e("setCompander: expected 14 finite values")
             return false
         }
-        val doubleArray = DoubleArray(14)
-        for((i, str) in array.withIndex())
-        {
-            val number = str.toDoubleOrNull()
-            if(number == null || !number.isFinite()) {
-                Timber.e("setCompander: malformed string")
-                return false
-            }
-            doubleArray[i] = number
-        }
-
-        return setCompanderInternal(enable, timeConstant, granularity, tfTransforms, doubleArray)
+        return setCompanderInternal(enable, timeConstant, granularity, tfTransforms, values)
     }
 
     fun setVdc(enable: Boolean, vdcPath: String): Boolean

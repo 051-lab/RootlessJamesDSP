@@ -88,7 +88,7 @@ Goal: malformed backups/preferences/packages fail closed without canceling futur
 
 Checks:
 
-- [ ] Add host tests for extra/missing EQ and compander tokens, malformed integer preferences where practical, NaN/Infinity configuration sanitization, bounded ZIP reads, and near-canceling Darwin coefficients.
+- [x] Add host tests for extra/missing EQ and compander tokens, malformed integer preferences, NaN/Infinity configuration sanitization, bounded ZIP reads, and near-canceling Darwin coefficients.
 - [x] Re-run all Darwin parser and headroom host tests.
 
 Completion gate: malformed imported state is rejected or defaulted without a crash, prior working DSP state remains usable, and a later valid update still applies.

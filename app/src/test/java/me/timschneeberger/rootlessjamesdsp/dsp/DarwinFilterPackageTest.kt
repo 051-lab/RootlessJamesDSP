@@ -63,25 +63,50 @@ class DarwinFilterPackageTest {
         assertThrows(IllegalArgumentException::class.java) {
             DarwinFilterPackage.read(packageFile("filter.flt", coefficientBytes(0)), "filter.flt")
         }
+    }
+
+    @Test
+    fun rejectsOversizedArchiveEntries() {
         assertThrows(IllegalArgumentException::class.java) {
-            DarwinFilterPackage.read(
-                packageFile("filter.flt", coefficientBytes { index ->
-                    when (index) {
-                        0 -> 1_000
-                        1 -> -997
-                        else -> 0
-                    }
-                }),
+            DarwinFilterPackage.list(packageFile("filter.flt", ByteArray(1025)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DarwinFilterPackage.list(packageFile(
                 "filter.flt",
-            )
+                coefficientBytes(),
+                manifestPadding = 64 * 1024,
+            ))
         }
     }
 
-    private fun packageFile(path: String?, coefficients: ByteArray? = null): File {
-        return packageFile(path?.let(::listOf).orEmpty(), coefficients)
+    @Test
+    fun rejectsNearCancelingDcSum() {
+        val file = packageFile("filter.flt", coefficientBytes { index ->
+            when (index) {
+                0 -> 1_000
+                1 -> -997
+                else -> 0
+            }
+        })
+
+        assertThrows(IllegalArgumentException::class.java) {
+            DarwinFilterPackage.read(file, "filter.flt")
+        }
     }
 
-    private fun packageFile(paths: List<String>, coefficients: ByteArray?): File {
+    private fun packageFile(
+        path: String?,
+        coefficients: ByteArray? = null,
+        manifestPadding: Int = 0,
+    ): File {
+        return packageFile(path?.let(::listOf).orEmpty(), coefficients, manifestPadding)
+    }
+
+    private fun packageFile(
+        paths: List<String>,
+        coefficients: ByteArray?,
+        manifestPadding: Int = 0,
+    ): File {
         val file = kotlin.io.path.createTempFile(suffix = ".zip").toFile().apply { deleteOnExit() }
         ZipOutputStream(file.outputStream()).use { zip ->
             if (paths.isNotEmpty()) {
@@ -89,7 +114,7 @@ class DarwinFilterPackageTest {
                 val list = paths.mapIndexed { index, path ->
                     """{"title":"Filter ${index + 1}","path":"$path"}"""
                 }.joinToString(",")
-                zip.write("""{"list":[$list]}""".toByteArray())
+                zip.write("""{"list":[$list],"padding":"${"x".repeat(manifestPadding)}"}""".toByteArray())
                 zip.closeEntry()
             }
             if (coefficients != null) {
