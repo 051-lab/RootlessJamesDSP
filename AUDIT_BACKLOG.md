@@ -49,7 +49,7 @@ Goal: preserve the active signal path until a replacement is valid, never run th
 
 Checks:
 
-- [ ] Add focused state-transition checks for disabled -> enabled, enabled -> replacement, enabled -> disabled, stale build, and invalid replacement.
+- [x] Add focused state-transition checks for disabled -> enabled, enabled -> replacement, enabled -> disabled, stale build, and invalid replacement.
 - [ ] Repeatedly switch Darwin filters while audio is running and monitor crashes, underruns, limiter ownership, and audible doubling.
 - [ ] Verify normal Convolver and Tube preferences are restored after Darwin is disabled.
 

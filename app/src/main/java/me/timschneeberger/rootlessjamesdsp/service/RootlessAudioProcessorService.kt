@@ -102,7 +102,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     private var activeDarwinHeadroomDb = 0f
     private val pendingDarwinUpdate = AtomicReference<DarwinUpdate?>(null)
     private val pendingBypass = AtomicReference<Boolean?>(null)
-    @Volatile private var requestedDarwinConfig: DarwinConfig? = null
+    private val darwinRequests = DarwinRequestGate<DarwinConfig>()
     @Volatile private var processingSampleRate = 48000
     @Volatile private var processingBufferFrames = 4096
     private var processingBypassed = false
@@ -320,7 +320,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                     applyOutputStages(readOutputConfig())
                     var darwinChanged = false
                     readDarwinConfig().let { config ->
-                        if (config != requestedDarwinConfig) {
+                        if (!darwinRequests.isCurrent(config)) {
                             darwinChanged = true
                             prepareDarwinUpdate(config)
                         }
@@ -507,30 +507,18 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             stopSelf()
             return
         }
-        pendingDarwinUpdate.getAndSet(null)?.engine?.close()
         val darwinConfig = readDarwinConfig()
+        darwinRequests.request(darwinConfig) { pendingDarwinUpdate.getAndSet(null) }?.engine?.close()
         val darwinUpdate = try {
             buildDarwinUpdate(darwinConfig, sampleRate, bufferFrames)
         } catch (ex: Exception) {
             Timber.e(ex, "Unable to initialize Darwin processing")
-            reportDarwinError(darwinConfig)
-            DarwinUpdate(darwinConfig.copy(enabled = false), null, 0f)
+            val fallback = darwinConfig.copy(enabled = false)
+            if (darwinRequests.restoreIfCurrent(darwinConfig, fallback))
+                reportDarwinError(darwinConfig)
+            DarwinUpdate(fallback, null, 0f)
         }
-        activeDarwinConfig = darwinUpdate.config
-        requestedDarwinConfig = darwinUpdate.config
-        activeDarwinHeadroomDb = darwinUpdate.headroomDb
-
-        darwinEngine?.close()
-        darwinEngine = darwinUpdate.engine
-        engine.externalDarwinProcessing = darwinEngine != null
-        engine.externalDarwinHarmonics = darwinEngine != null && darwinConfig.harmonic > 0f
-        applyOutputStages(readOutputConfig())
-        engine.syncWithPreferences(arrayOf(
-            Constants.PREF_DARWIN,
-            Constants.PREF_CONVOLVER,
-            Constants.PREF_TUBE,
-            Constants.PREF_OUTPUT,
-        ))
+        commitDarwinUpdate(darwinUpdate)
 
         Timber.i("Sample rate: $sampleRate; Encoding: ${encoding.name}; " +
                 "Buffer size: $bufferSize; Buffer size (bytes): $bufferSizeBytes ; " +
@@ -921,8 +909,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     }
 
     private fun prepareDarwinUpdate(config: DarwinConfig) {
-        requestedDarwinConfig = config
-        pendingDarwinUpdate.getAndSet(null)?.engine?.let { stale ->
+        darwinRequests.request(config) { pendingDarwinUpdate.getAndSet(null) }?.engine?.let { stale ->
             applicationScope.launch(Dispatchers.IO) { stale.close() }
         }
         applicationScope.launch(Dispatchers.IO) {
@@ -930,18 +917,25 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                 buildDarwinUpdate(config, processingSampleRate, processingBufferFrames)
             } catch (ex: Exception) {
                 Timber.e(ex, "Invalid Darwin update; keeping the active filter")
-                if (config == requestedDarwinConfig) {
-                    requestedDarwinConfig = activeDarwinConfig
+                if (darwinRequests.restoreIfCurrent(config, activeDarwinConfig)) {
                     reportDarwinError(config)
                 }
                 return@launch
             }
 
-            if (isServiceDisposing || config != requestedDarwinConfig || config != readDarwinConfig()) {
+            var replaced: DarwinUpdate? = null
+            var published = false
+            darwinRequests.runIfCurrent(config) {
+                if (!isServiceDisposing && config == readDarwinConfig()) {
+                    replaced = pendingDarwinUpdate.getAndSet(update)
+                    published = true
+                }
+            }
+            if (!published) {
                 update.engine?.close()
                 return@launch
             }
-            pendingDarwinUpdate.getAndSet(update)?.engine?.close()
+            replaced?.engine?.close()
         }
     }
 
@@ -982,24 +976,27 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     }
 
     private fun commitDarwinUpdate(update: DarwinUpdate) {
-        if (update.config != requestedDarwinConfig) {
+        var previous: JamesDspLocalEngine? = null
+        val committed = darwinRequests.runIfCurrent(update.config) {
+            previous = darwinEngine
+            if (update.engine != null) {
+                if (!engine.disableConvolver())
+                    Timber.w("Unable to disable the main convolver before Darwin handoff")
+                if (update.config.harmonic > 0f && !engine.setVacuumTube(false, 0f))
+                    Timber.w("Unable to disable the main tube stage before Darwin handoff")
+            }
+            darwinEngine = update.engine
+            activeDarwinConfig = update.config
+            activeDarwinHeadroomDb = update.headroomDb
+            engine.externalDarwinProcessing = update.engine != null
+            engine.externalDarwinHarmonics = update.engine != null && update.config.harmonic > 0f
+        }
+        if (!committed) {
             update.engine?.let { stale ->
                 applicationScope.launch(Dispatchers.IO) { stale.close() }
             }
             return
         }
-        val previous = darwinEngine
-        if (update.engine != null) {
-            if (!engine.disableConvolver())
-                Timber.w("Unable to disable the main convolver before Darwin handoff")
-            if (update.config.harmonic > 0f && !engine.setVacuumTube(false, 0f))
-                Timber.w("Unable to disable the main tube stage before Darwin handoff")
-        }
-        darwinEngine = update.engine
-        activeDarwinConfig = update.config
-        activeDarwinHeadroomDb = update.headroomDb
-        engine.externalDarwinProcessing = update.engine != null
-        engine.externalDarwinHarmonics = update.engine != null && update.config.harmonic > 0f
         applyOutputStages(readOutputConfig())
         engine.syncWithPreferences(arrayOf(
             Constants.PREF_DARWIN,
